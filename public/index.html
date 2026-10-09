@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Collab Scout</title>
+    <meta
+      name="description"
+      content="Find the partner your audience already loves, with Qloo taste data behind every pick."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Martian+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-view="idle">
+    <header class="top">
+      <a class="mark" href="./" aria-label="Collab Scout, start page">
+        <span class="mark-discs" aria-hidden="true"><i></i><i></i></span>
+        Collab Scout
+      </a>
+      <p class="status" aria-live="polite">
+        <span class="pill" id="status-qloo" data-state="checking">Qloo: checking</span>
+        <span class="pill" id="status-model" hidden></span>
+      </p>
+    </header>
+
+    <main>
+      <!-- Start page -->
+      <section class="hero" id="view-idle">
+        <div class="hero-copy">
+          <h1>Find the partner your audience already loves.</h1>
+          <p class="lede">
+            Tell Collab Scout who you are and what kind of partner you want. It checks Qloo's
+            taste data for whose audience overlaps yours, and shows the evidence behind every
+            pick.
+          </p>
+
+          <form class="brief-form" id="brief-form">
+            <label for="brief">Your brief</label>
+            <textarea
+              id="brief"
+              name="brief"
+              rows="4"
+              maxlength="2000"
+              required
+              placeholder="Who you are, what kind of partner you want, and where."
+            ></textarea>
+            <div class="form-row">
+              <button class="primary" type="submit">Start scouting</button>
+              <p class="form-hint" id="form-hint" role="status"></p>
+            </div>
+          </form>
+
+          <div class="examples">
+            <p>Or start from one of these</p>
+            <ul id="examples"></ul>
+          </div>
+        </div>
+
+        <figure class="overlap" aria-label="Two audiences and the taste they share">
+          <div class="discs" data-state="apart">
+            <i class="disc you"></i>
+            <i class="disc them"></i>
+            <span class="disc-label label-you">Your audience</span>
+            <span class="disc-label label-them">Their audience</span>
+            <span class="disc-label label-both">What Qloo finds in common</span>
+          </div>
+        </figure>
+      </section>
+
+      <section class="steps" id="view-steps" aria-labelledby="steps-title">
+        <h2 id="steps-title">What a scout does, in order</h2>
+        <ol>
+          <li>
+            <h3>Pins down who you mean</h3>
+            <p>Matches your brand, or the well-known names it resembles, to Qloo entities and asks you when a match is unclear.</p>
+            <p class="tools"><code>qloo_describe</code> <code>qloo_find_tags</code></p>
+          </li>
+          <li>
+            <h3>Maps your audience's taste</h3>
+            <p>Finds what the same audience likes in music, fashion, food, film and places.</p>
+            <p class="tools"><code>qloo_recommend</code> <code>qloo_entity_tags</code></p>
+          </li>
+          <li>
+            <h3>Ranks a shortlist</h3>
+            <p>Scores every candidate partner together against your audience, so the order means something.</p>
+            <p class="tools"><code>qloo_rank</code> <code>qloo_compare_audiences</code></p>
+          </li>
+          <li>
+            <h3>Checks momentum and place</h3>
+            <p>Looks at who is rising and where the overlap is strongest.</p>
+            <p class="tools"><code>qloo_trends</code> <code>qloo_where_popular</code></p>
+          </li>
+          <li>
+            <h3>Writes the brief</h3>
+            <p>Ranked partners, the Qloo findings behind each one, a pitch you can send, and what the data does not show.</p>
+          </li>
+        </ol>
+      </section>
+
+      <!-- Scouting page -->
+      <section class="work" id="view-work" hidden>
+        <aside class="log" aria-labelledby="log-title">
+          <div class="log-brief">
+            <p class="eyebrow">Your brief</p>
+            <p id="log-brief-text"></p>
+            <button class="quiet" type="button" id="restart">Start a new scout</button>
+          </div>
+          <div class="log-head">
+            <h2 id="log-title">Field log</h2>
+            <p id="log-count">No Qloo calls yet</p>
+          </div>
+          <ol class="log-list" id="log-list"></ol>
+        </aside>
+
+        <div class="stage" id="stage" aria-live="polite">
+          <div class="panel working" id="panel-working">
+            <div class="discs" data-state="working" aria-hidden="true">
+              <i class="disc you"></i>
+              <i class="disc them"></i>
+            </div>
+            <p class="working-title">Scouting</p>
+            <p class="working-note" id="working-note">Reading your brief.</p>
+          </div>
+
+          <form class="panel question" id="panel-question" hidden>
+            <p class="eyebrow">The scout needs your call</p>
+            <h2 id="question-text"></h2>
+            <div class="options" id="question-options"></div>
+            <label for="question-answer">Or answer in your own words</label>
+            <div class="answer-row">
+              <input id="question-answer" type="text" autocomplete="off" maxlength="500" />
+              <button class="primary" type="submit">Send answer</button>
+            </div>
+          </form>
+
+          <div class="panel ended" id="panel-ended" hidden>
+            <p class="eyebrow">No brief this time</p>
+            <h2 id="ended-title"></h2>
+            <p id="ended-text"></p>
+            <button class="primary" type="button" data-restart>Start a new scout</button>
+          </div>
+
+          <article class="panel brief" id="panel-brief" hidden></article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p>
+        Qloo describes audiences in aggregate. An overlap is a pattern across many people, not a
+        prediction about any one person.
+      </p>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
