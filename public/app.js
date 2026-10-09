@@ -135,7 +135,11 @@ const finishCall = (event) => {
   if (event.status === "error") state.lastError = event.error;
 };
 
-const addNote = (text) => {
+// Models write Markdown; the log shows plain text, so drop the emphasis marks.
+const plain = (text) => String(text ?? "").replace(/\*\*|__|`/g, "");
+
+const addNote = (raw) => {
+  const text = plain(raw);
   state.notes.push(text);
   $("#log-list").append(el("li", { class: "note", text }));
   $("#working-note").textContent = text.split("\n")[0];
@@ -151,15 +155,18 @@ const showPanel = (name) => {
 };
 
 const showQuestion = (event) => {
-  $("#question-text").textContent = event.question;
+  const options = list(event.options).filter((option) => typeof option === "string");
+  const question = plain(event.question);
+  $("#question-text").textContent = question;
+  $("#question-text").classList.toggle("long", question.length > 140);
   $("#question-options").replaceChildren(
-    ...event.options.map((option) =>
+    ...options.map((option) =>
       el("button", { class: "option", type: "button", text: option, onclick: () => sendAnswer(option) }),
     ),
   );
   $("#question-answer").value = "";
   showPanel("question");
-  (event.options.length ? $("#question-options button") : $("#question-answer")).focus();
+  (options.length ? $("#question-options button") : $("#question-answer")).focus();
 };
 
 const showEnded = (title, text) => {
@@ -332,7 +339,8 @@ const consume = async (events) => {
   try {
     for await (const event of events) handle(event);
   } catch (error) {
-    showEnded("The scout could not reach the server.", error.message);
+    const offline = error instanceof TypeError && /fetch|network/i.test(error.message);
+    showEnded(offline ? "The scout could not reach the server." : "The scout hit a problem.", error.message);
   }
 };
 

@@ -13,7 +13,7 @@ const asList = (value) => {
   return value.trim() ? [value.trim()] : [];
 };
 
-const strings = (value) => (asList(value) ?? []).filter((item) => typeof item === "string");
+export const strings = (value) => (asList(value) ?? []).filter((item) => typeof item === "string");
 
 export const checkBrief = (input) => {
   const partners = asList(input.partners);

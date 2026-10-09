@@ -1105,3 +1105,16 @@ body[data-view="work"] .foot {
     transition: none !important;
   }
 }
+
+/* A question the model wrote at length reads as body text, not a headline. */
+.question h2 {
+  white-space: pre-line;
+}
+
+.question h2.long {
+  max-width: 44rem;
+  font-size: 1.0625rem;
+  font-weight: 500;
+  line-height: 1.5;
+  text-wrap: wrap;
+}
