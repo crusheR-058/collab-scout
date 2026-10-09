@@ -1,7 +1,7 @@
 // The scouting loop: a model on Bedrock decides which Qloo tools to call; we run
 // them, pause when it asks the user something, and stop when it delivers a brief.
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
-import { checkBrief } from "./brief.mjs";
+import { checkBrief, strings } from "./brief.mjs";
 import { SYSTEM_PROMPT } from "./prompt.mjs";
 import { callQloo } from "./qloo.mjs";
 import { ASK_USER, DELIVER_BRIEF, loadTools } from "./tools.mjs";
@@ -142,7 +142,9 @@ export async function* run(session) {
 
     if (ask) {
       session.pending = { results, askId: ask.toolUseId };
-      yield { type: "question", question: ask.input.question, options: ask.input.options ?? [] };
+      // The model sometimes sends the options as a JSON string, or no question text.
+      const question = String(ask.input.question ?? "").trim() || said || "The scout needs more detail.";
+      yield { type: "question", question, options: strings(ask.input.options) };
       return;
     }
 
