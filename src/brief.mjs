@@ -4,11 +4,14 @@
 const asList = (value) => {
   if (Array.isArray(value)) return value;
   if (typeof value !== "string") return undefined;
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return parsed;
-  } catch {
-    // Not JSON: fall through and treat it as one item.
+  // Try it as written, then as a list that lost its brackets: "a", "b".
+  for (const candidate of [value, `[${value}]`]) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Not JSON in this form.
+    }
   }
   return value.trim() ? [value.trim()] : [];
 };
