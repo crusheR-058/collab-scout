@@ -19,6 +19,7 @@ COMMAND=$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" \
   --parameters "commands=[
     \"set -e\",
     \"aws s3 cp s3://$BUCKET/collab-scout.tgz /tmp/collab-scout.tgz --region $REGION --only-show-errors\",
+    \"rm -rf /opt/collab-scout/src /opt/collab-scout/public /opt/collab-scout/scripts\",
     \"tar -xzf /tmp/collab-scout.tgz -C /opt/collab-scout\",
     \"cd /opt/collab-scout && npm ci --omit=dev --silent && chown -R app:app /opt/collab-scout\",
     \"systemctl restart collab-scout && sleep 3 && systemctl is-active collab-scout\",
