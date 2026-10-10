@@ -31,7 +31,7 @@ QLOO_API_KEY=${QLOO_KEY}
 QLOO_BASE_URL=https://hackathon.api.qloo.com
 QLOO_TRUSTED_BASE_URL=https://hackathon.api.qloo.com
 AWS_REGION=${REGION}
-BEDROCK_MODEL_ID=zai.glm-4.7
+BEDROCK_MODEL_ID=zai.glm-5
 PORT=8787
 SCOUTS_PER_HOUR=8
 EOF

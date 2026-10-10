@@ -6,7 +6,7 @@ import { SYSTEM_PROMPT } from "./prompt.mjs";
 import { callQloo } from "./qloo.mjs";
 import { ASK_USER, DELIVER_BRIEF, loadTools } from "./tools.mjs";
 
-export const MODEL = process.env.BEDROCK_MODEL_ID ?? "zai.glm-4.7";
+export const MODEL = process.env.BEDROCK_MODEL_ID ?? "zai.glm-5";
 const MAX_STEPS = 24;
 const WRAP_UP_AT = MAX_STEPS - 4;
 const MIN_PARTNERS = 3;
