@@ -73,7 +73,10 @@ const deliverBrief = {
           properties: { name: { type: "string" }, rationale: { type: "string" } },
         },
       },
-      pitch: { type: "string", description: "A short outreach pitch to the top partner." },
+      pitch: {
+        type: "string",
+        description: "A short outreach pitch addressed to the first partner in the list, and to no one else.",
+      },
       limitations: {
         type: "array",
         items: { type: "string" },
