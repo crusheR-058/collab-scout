@@ -11,6 +11,7 @@ const MAX_BRIEF_CHARS = 2000;
 const SCOUTS_PER_HOUR = Number(process.env.SCOUTS_PER_HOUR ?? 8);
 const HOUR_MS = 60 * 60 * 1000;
 const HEARTBEAT_MS = 10 * 1000;
+const MAX_REFINEMENTS = 5;
 
 const sessions = new Map();
 const starts = new Map();
@@ -46,6 +47,10 @@ const stream = async (res, id, session) => {
   const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), HEARTBEAT_MS);
 
   session.running = true;
+  // The visitor pressed Stop or closed the page while the scout was running.
+  res.on("close", () => {
+    if (session.running) session.cancelled = true;
+  });
   try {
     for await (const event of run(session)) send(event);
   } catch (error) {
@@ -98,6 +103,14 @@ app.post("/api/scout/:id/answer", async (req, res) => {
   if (!session.pending || session.running || !reply) {
     res.status(409).json({ error: "This scout is not waiting for an answer." });
     return;
+  }
+  // A reply to a delivered brief asks for a revised one, which costs a full run.
+  if (session.pending.afterBrief) {
+    session.refinements = (session.refinements ?? 0) + 1;
+    if (session.refinements > MAX_REFINEMENTS) {
+      res.status(429).json({ error: `A scout can be revised ${MAX_REFINEMENTS} times. Start a new one.` });
+      return;
+    }
   }
   answer(session, reply.slice(0, MAX_BRIEF_CHARS));
   await stream(res, req.params.id, session);

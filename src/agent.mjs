@@ -1,7 +1,7 @@
 // The scouting loop: a model on Bedrock decides which Qloo tools to call; we run
 // them, pause when it asks the user something, and stop when it delivers a brief.
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
-import { checkBrief, strings } from "./brief.mjs";
+import { checkBrief, entityLabels, groundBrief, recordEntities, strings } from "./brief.mjs";
 import { SYSTEM_PROMPT } from "./prompt.mjs";
 import { callQloo } from "./qloo.mjs";
 import { ASK_USER, DELIVER_BRIEF, loadTools } from "./tools.mjs";
@@ -9,6 +9,7 @@ import { ASK_USER, DELIVER_BRIEF, loadTools } from "./tools.mjs";
 export const MODEL = process.env.BEDROCK_MODEL_ID ?? "zai.glm-4.7";
 const MAX_STEPS = 24;
 const WRAP_UP_AT = MAX_STEPS - 4;
+const MIN_PARTNERS = 3;
 const WRAP_UP =
   "You are almost out of steps. Call deliver_brief now with what the results so far support, " +
   "and list anything you could not check under limitations.";
@@ -19,14 +20,18 @@ export const newSession = (brief) => ({
   messages: [{ role: "user", content: [{ text: brief }] }],
   pending: undefined,
   done: false,
+  cancelled: false,
+  // Every entity Qloo has returned in this scout, to check the brief against.
+  entities: new Map(),
 });
 
 const toolResult = (toolUseId, text, isError = false) => ({
   toolResult: { toolUseId, content: [{ text }], status: isError ? "error" : "success" },
 });
 
-// Resume a session that stopped on a question. A question asked through
-// ask_user is answered as its tool result; one asked in plain text gets a reply.
+// Resume a session that stopped on a question or a delivered brief. A question
+// asked through ask_user is answered as its tool result; a plain-text question,
+// or a change the user wants to a brief, gets a text reply.
 export const answer = (session, text) => {
   const { results, askId } = session.pending;
   const reply = askId ? toolResult(askId, text) : { text };
@@ -34,8 +39,9 @@ export const answer = (session, text) => {
   session.pending = undefined;
 };
 
-const runQloo = async ({ toolUseId, name, input }) => {
+const runQloo = async ({ toolUseId, name, input }, entities) => {
   const envelope = await callQloo(name, input);
+  recordEntities(entities, name, envelope);
   return {
     block: toolResult(toolUseId, JSON.stringify(envelope), envelope.status === "error"),
     event: {
@@ -71,6 +77,11 @@ export async function* run(session) {
   const tools = await loadTools();
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
+    // The visitor pressed Stop or left: spend no more Qloo quota or tokens.
+    if (session.cancelled) {
+      session.done = true;
+      return;
+    }
     let response;
     try {
       response = await client.send(
@@ -116,16 +127,28 @@ export async function* run(session) {
     const calls = content.filter((block) => block.toolUse).map((block) => block.toolUse);
     const [ask, ...extraAsks] = calls.filter((call) => call.name === ASK_USER);
     const briefCall = calls.find((call) => call.name === DELIVER_BRIEF);
-    const { brief, problem } = briefCall ? checkBrief(briefCall.input) : {};
+    let { brief, problem } = briefCall ? checkBrief(briefCall.input) : {};
+    // Push back once on a thin shortlist; accept it if the model insists.
+    if (brief && brief.partners.length < MIN_PARTNERS && !session.askedForMore) {
+      session.askedForMore = true;
+      problem = `Brief not accepted: it names ${brief.partners.length} partner. Give the three to five strongest, or deliver again as it is if Qloo returned no more and say so under limitations.`;
+      brief = undefined;
+    }
     const qlooCalls = calls.filter((call) => call.name.startsWith("qloo_"));
     const unknown = calls.filter(
       (call) => ![ASK_USER, DELIVER_BRIEF].includes(call.name) && !call.name.startsWith("qloo_"),
     );
 
     for (const call of qlooCalls) {
-      yield { type: "tool_call", id: call.toolUseId, name: call.name, input: call.input };
+      yield {
+        type: "tool_call",
+        id: call.toolUseId,
+        name: call.name,
+        input: call.input,
+        labels: entityLabels(session.entities, call.input),
+      };
     }
-    const outcomes = await Promise.all(qlooCalls.map(runQloo));
+    const outcomes = await Promise.all(qlooCalls.map((call) => runQloo(call, session.entities)));
     for (const { event } of outcomes) yield event;
 
     const results = [
@@ -135,10 +158,14 @@ export async function* run(session) {
     ];
     if (brief) {
       results.push(toolResult(briefCall.toolUseId, "Brief delivered."));
-      yield { type: "brief", brief };
-    } else if (briefCall) {
-      results.push(toolResult(briefCall.toolUseId, problem, true));
+      if (ask) results.push(toolResult(ask.toolUseId, "The brief is already delivered.", true));
+      // Stay open so the user can ask for a change to this brief.
+      session.pending = { results, afterBrief: true };
+      yield { type: "brief", brief: groundBrief(brief, session.entities) };
+      yield { type: "done" };
+      return;
     }
+    if (briefCall) results.push(toolResult(briefCall.toolUseId, problem, true));
 
     if (ask) {
       session.pending = { results, askId: ask.toolUseId };
@@ -148,13 +175,8 @@ export async function* run(session) {
       return;
     }
 
-    if (step === WRAP_UP_AT && !brief) results.push({ text: WRAP_UP });
+    if (step === WRAP_UP_AT) results.push({ text: WRAP_UP });
     session.messages.push({ role: "user", content: results });
-    if (brief) {
-      session.done = true;
-      yield { type: "done" };
-      return;
-    }
   }
 
   yield { type: "error", message: "Stopped after reaching the step limit without a brief." };

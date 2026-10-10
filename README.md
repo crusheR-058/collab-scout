@@ -33,7 +33,18 @@ Browser ──HTTP + server-sent events──▶ Node server ──▶ Amazon Be
 - **Qloo access** goes through the local `qloo mcp` server from `@qloo/qloo-harness`. The browser never talks to Qloo and never sees the key.
 - **The model** runs on Amazon Bedrock through the Converse API. The default is GLM 4.7; any Bedrock model with tool support works by changing `BEDROCK_MODEL_ID`.
 - **The agent loop** is in [src/agent.mjs](src/agent.mjs). It gives the model Qloo's nine tools plus two of its own: `ask_user`, which pauses the run for your answer, and `deliver_brief`, which returns the brief as structured data.
-- **The UI** is plain HTML, CSS and JavaScript in [public/](public/), with no build step.
+- **The brief is checked against Qloo's own results.** [src/brief.mjs](src/brief.mjs) records every entity Qloo returns during a scout. Each partner in the brief then takes Qloo's name, affinity, popularity and image, and a partner Qloo never returned is flagged in the UI as not found.
+- **The UI** is plain HTML, CSS and JavaScript modules in [public/](public/), with no build step.
+
+## What you can do in the UI
+
+- **Fill in a guided brief** (who you are, the kind of partner you want, names your audience loves, market), or write it freely.
+- **Watch the scout work.** A stepper shows which of the five stages it has reached, with elapsed time and the number of Qloo calls. You can stop it at any point, which also stops the Qloo calls.
+- **Read the brief**: ranked partners with photo, affinity and popularity meters, the Qloo findings behind each, the strongest locations, a pitch, and what the data does not show.
+- **Ask for a change** ("only lesser-known partners", "try brands instead") and get a revised brief, up to five times per scout.
+- **Copy, print or save the brief as a PDF**, and reopen past scouts, which are kept in your browser only.
+
+`npm install` followed by `node scripts/ui-check.mjs http://localhost:8787 <folder outside the repo>` clicks through a whole scout in Microsoft Edge and saves screenshots.
 
 ## Run it
 
