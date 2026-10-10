@@ -31,7 +31,7 @@ Browser ──HTTP + server-sent events──▶ Node server ──▶ Amazon Be
 ```
 
 - **Qloo access** goes through the local `qloo mcp` server from `@qloo/qloo-harness`. The browser never talks to Qloo and never sees the key.
-- **The model** runs on Amazon Bedrock through the Converse API. The default is GLM 4.7; any Bedrock model with tool support works by changing `BEDROCK_MODEL_ID`.
+- **The model** runs on Amazon Bedrock through the Converse API. The default is GLM 5; any Bedrock model with tool support works by changing `BEDROCK_MODEL_ID`.
 - **The agent loop** is in [src/agent.mjs](src/agent.mjs). It gives the model Qloo's nine tools plus two of its own: `ask_user`, which pauses the run for your answer, and `deliver_brief`, which returns the brief as structured data.
 - **The brief is checked against Qloo's own results.** [src/brief.mjs](src/brief.mjs) records every entity Qloo returns during a scout. Each partner in the brief then takes Qloo's name, affinity, popularity and image, and a partner Qloo never returned is flagged in the UI as not found.
 - **The UI** is plain HTML, CSS and JavaScript modules in [public/](public/), with no build step.
@@ -80,7 +80,7 @@ Copy `.env.example` to `.env` to change any of these.
 | --- | --- | --- |
 | `QLOO_API_KEY` | unset | Qloo credential. Leave unset locally if you ran `qloo setup --qloo`; set it as a secret on a server. |
 | `AWS_REGION` | `ap-south-1` | Bedrock region. |
-| `BEDROCK_MODEL_ID` | `zai.glm-4.7` | Model that drives the agent. |
+| `BEDROCK_MODEL_ID` | `zai.glm-5` | Model that drives the agent. |
 | `PORT` | `8787` | HTTP port. |
 | `SCOUTS_PER_HOUR` | `8` | How many scouts one visitor can start per hour. |
 
