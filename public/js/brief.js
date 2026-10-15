@@ -1,24 +1,88 @@
 // Draws the finished partnership brief.
 import { $, el, list } from "./dom.js";
-import { callCountText } from "./log.js";
+import { callCountText, describeCall, named } from "./log.js";
 
-const TRENDS = { rising: "↗ Rising", steady: "→ Steady", falling: "↘ Falling" };
+// Trend direction is calculated by the server from Qloo's population ranks.
+const TRENDS = { rising: "↗ Rising in Qloo trends", falling: "↘ Falling in Qloo trends", flat: "→ No movement in Qloo trends" };
+
+const KEY =
+  "Bars, ranks and Qloo records come from Qloo. Trend direction and the shared ranking are worked out from them here. " +
+  "Rationales, summaries and the pitch are the scout's reading of those results. Qloo does not show availability, fees or willingness to partner.";
+
+const score = (value) => (typeof value === "number" ? value.toFixed(2) : undefined);
+
+const qlooLine = (partner) => {
+  if (partner.verified === false) return "Not found in Qloo's results for this scout.";
+  const parts = [
+    score(partner.affinity) && `affinity ${score(partner.affinity)} (shared ranking)`,
+    score(partner.popularity) && `popularity ${score(partner.popularity)}`,
+    partner.trend?.direction && TRENDS[partner.trend.direction]?.slice(2).toLowerCase(),
+  ].filter(Boolean);
+  return parts.length ? `Qloo: ${parts.join(", ")}` : undefined;
+};
 
 const partnerLine = (partner, index) =>
   [
     `${index + 1}. **${partner.name}** (${partner.type})`,
+    qlooLine(partner) && `   ${qlooLine(partner)}`,
     `   ${partner.rationale}`,
     ...list(partner.evidence).map((item) => `   - ${item}`),
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+// "urn:entity:tv_show" reads as "tv show".
+const categoryName = (urn) => String(urn ?? "").replace(/^urn:entity:/, "").replace(/_/g, " ");
+
+const OPPORTUNITY_ROWS = 12;
+
+// Seeds with their Qloo category, so a seed resolved as a single café rather
+// than the brand is visible.
+const seedNames = (scan) =>
+  list(scan.seeds)
+    .map((seed) => (seed.category ? `${seed.name} (${categoryName(seed.category)})` : seed.name))
+    .join(", ");
+
+const methodText = (scan) => {
+  const seeds = seedNames(scan);
+  const size =
+    scan.prefer === "emerging" ? "less popular than the other candidates" : scan.prefer === "established" ? "more popular than the other candidates" : undefined;
+  return [
+    `Opportunity score, method ${scan.version}: a heuristic that ranks within this scan only.`,
+    `Fit (weight ${scan.weights.fit}) is the candidate's place in Qloo's order within its own category.`,
+    size && `Size (weight ${scan.weights.size}) favours candidates ${size}.`,
+    `Novelty (weight ${scan.weights.novelty}) is 1 for a category other than the seeds' (${seeds}).`,
+    "Missing data counts as zero.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+};
+
+const scannedText = (scan) =>
+  `Scanned from ${seedNames(scan)}: ` +
+  list(scan.categories)
+    .map(({ category, count, error }) => `${categoryName(category)} ${error ? `(failed: ${error})` : count}`)
+    .join(", ");
+
+const placeCheck = (place) =>
+  place.qloo
+    ? `Qloo heatmap: near ${place.qloo.name}${place.qloo.country ? `, ${place.qloo.country}` : ""}`
+    : "Not a city from a Qloo heatmap";
 
 export const briefMarkdown = (brief) =>
   [
     `# ${brief.brand} × ${brief.partners[0]?.name ?? "no match"}`,
     brief.goal,
     `## Your audience\n${brief.audience_summary}`,
+    `_${KEY}_`,
     `## Partners\n${brief.partners.map(partnerLine).join("\n")}`,
     list(brief.locations).length &&
-      `## Where\n${brief.locations.map((place) => `- **${place.name}**: ${place.rationale}`).join("\n")}`,
+      `## Where\n${brief.locations.map((place) => `- **${place.name}**: ${place.rationale} (${placeCheck(place)})`).join("\n")}`,
+    brief.opportunities &&
+      `## Across categories\n${scannedText(brief.opportunities)}\n\n${list(brief.opportunities.candidates)
+        .slice(0, OPPORTUNITY_ROWS)
+        .map((candidate, index) => `${index + 1}. ${candidate.name} (${categoryName(candidate.category)}), score ${score(candidate.score)}`)
+        .join("\n")}\n\n_${methodText(brief.opportunities)}_`,
     `## Pitch\n${brief.pitch}`,
     `## What this does not show\n${list(brief.limitations)
       .map((item) => `- ${item}`)
@@ -79,6 +143,42 @@ const matchMark = (partner) => {
   return undefined;
 };
 
+const when = (time) => new Date(time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+// One line per Qloo call that returned this partner, in the field log's words.
+const observationLine = (observation) => {
+  const placed = observation.tool === "qloo_describe" ? "found" : `#${observation.position} of ${observation.of}`;
+  return [
+    `${describeCall(observation.tool, named(observation.input ?? {}, observation.labels))}: ${placed}`,
+    score(observation.affinity) && `affinity ${score(observation.affinity)} in this query only`,
+    list(observation.drivers).length && `driven by ${observation.drivers.join(", ")}`,
+    observation.at && when(observation.at),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};
+
+const trendLine = ({ from, to }) =>
+  `Qloo population rank ${from.rank.toLocaleString()} on ${from.date}, ${to.rank.toLocaleString()} on ${to.date}. A smaller rank is more popular.`;
+
+const records = (partner) => {
+  if (!partner.verified) {
+    return el("p", { class: "records-none", text: "Qloo did not return this name in this scout, so nothing about it has been checked." });
+  }
+  const count = list(partner.observations).length;
+  const lines = [
+    partner.description && `Qloo describes it as: ${partner.description}`,
+    ...list(partner.observations).map(observationLine),
+    partner.trend?.from && trendLine(partner.trend),
+  ].filter(Boolean);
+  return el(
+    "details",
+    { class: "records" },
+    el("summary", { text: `Qloo records (${count} ${count === 1 ? "call" : "calls"})` }),
+    el("ul", {}, ...lines.map((line) => el("li", { text: line }))),
+  );
+};
+
 const renderPartner = (partner) =>
   el(
     "li",
@@ -92,15 +192,83 @@ const renderPartner = (partner) =>
         { class: "partner-head" },
         el("span", { class: "partner-name", text: partner.name }),
         el("span", { class: "tag", text: partner.type }),
-        TRENDS[partner.trend] && el("span", { class: "tag", "data-trend": partner.trend, text: TRENDS[partner.trend] }),
+        TRENDS[partner.trend?.direction] &&
+          el("span", { class: "tag", "data-trend": partner.trend.direction, text: TRENDS[partner.trend.direction] }),
         matchMark(partner),
       ),
       el("dl", { class: "meters" }, meter("Affinity", partner.affinity), meter("Popularity", partner.popularity)),
       el("p", { class: "partner-why", text: partner.rationale }),
-      list(partner.evidence).length && el("p", { class: "evidence-label", text: "From Qloo" }),
+      list(partner.evidence).length && el("p", { class: "evidence-label", text: "The scout's reading" }),
       el("ul", { class: "evidence" }, ...list(partner.evidence).map((item) => el("li", { text: item }))),
+      records(partner),
     ),
   );
+
+const cell = (value) => el("td", { text: value === undefined ? "–" : String(value) });
+
+// The cross-category scan as a table: every number is a Qloo value or our
+// documented calculation from one.
+const opportunitiesSection = (scan, partners) => {
+  const chosen = new Set(partners.map((partner) => String(partner.id ?? "").toUpperCase()));
+  const rows = list(scan.candidates).slice(0, OPPORTUNITY_ROWS);
+  return section(
+    "Across categories",
+    el("p", { class: "basis", text: scannedText(scan) }),
+    rows.length
+      ? el(
+          "div",
+          { class: "table-wrap" },
+          el(
+            "table",
+            { class: "opportunities" },
+            el("caption", { text: `Top ${rows.length} of ${list(scan.candidates).length} candidates by opportunity score` }),
+            el(
+              "thead",
+              {},
+              el("tr", {}, ...["", "Candidate", "Category", "Qloo order", "Popularity", "Fit", "Size", "Novelty", "Score"].map((head) => el("th", { scope: "col", text: head }))),
+            ),
+            el(
+              "tbody",
+              {},
+              ...rows.map((candidate, index) =>
+                el(
+                  "tr",
+                  { "data-chosen": chosen.has(String(candidate.id).toUpperCase()) ? "true" : undefined },
+                  cell(index + 1),
+                  el(
+                    "th",
+                    { scope: "row" },
+                    candidate.name,
+                    chosen.has(String(candidate.id).toUpperCase()) && el("span", { class: "tag match", text: " · in your partners" }),
+                    list(candidate.missing).length && el("span", { class: "tag", text: ` · missing ${candidate.missing.join(", ")}` }),
+                  ),
+                  cell(categoryName(candidate.category)),
+                  cell(`#${candidate.position} of ${candidate.of}`),
+                  cell(score(candidate.popularity)),
+                  cell(score(candidate.fit)),
+                  cell(score(candidate.size)),
+                  cell(candidate.novelty === undefined ? undefined : candidate.novelty ? "yes" : "no"),
+                  el("td", {}, el("b", { text: score(candidate.score) })),
+                ),
+              ),
+            ),
+          ),
+        )
+      : el("p", { text: "The scan returned no candidates." }),
+    el("p", { class: "basis", text: methodText(scan) }),
+  );
+};
+
+// Which Qloo call the affinity bars come from, so a reader knows they compare.
+const basisNote = (brief) => {
+  const basis = brief.affinity_basis;
+  if (!basis) return el("p", { class: "basis", text: "Qloo returned no affinity that covers these partners together, so no affinity bars are shown." });
+  const call = describeCall(basis.tool, named(basis.input ?? {}, basis.labels));
+  return el("p", {
+    class: "basis",
+    text: `Affinity bars come from one Qloo call that scored ${basis.covers} of these partners together (${call}), so they compare. Affinities from other queries are in each partner's Qloo records.`,
+  });
+};
 
 const refineForm = (onRefine) => {
   const input = el("input", {
@@ -148,8 +316,11 @@ export const renderBrief = (brief, { onRefine, onRestart, onStartAgain }) => {
     el(
       "div",
       { class: "brief-body" },
+      el("p", { class: "key", text: KEY }),
       section("Your audience", el("p", { text: brief.audience_summary })),
-      partners.length && section("Partners, ranked", el("ol", { class: "partners" }, ...partners.map(renderPartner))),
+      partners.length &&
+        section("Partners, ranked", basisNote(brief), el("ol", { class: "partners" }, ...partners.map(renderPartner))),
+      brief.opportunities && opportunitiesSection(brief.opportunities, partners),
       list(brief.locations).length &&
         section(
           "Where the overlap is strongest",
@@ -157,7 +328,13 @@ export const renderBrief = (brief, { onRefine, onRestart, onStartAgain }) => {
             "ul",
             { class: "places" },
             ...brief.locations.map((place) =>
-              el("li", {}, el("strong", { text: place.name }), el("span", { text: place.rationale })),
+              el(
+                "li",
+                {},
+                el("strong", { text: place.name }),
+                el("span", { text: place.rationale }),
+                el("small", { class: place.qloo ? "place-check" : "place-check unchecked", text: placeCheck(place) }),
+              ),
             ),
           ),
         ),

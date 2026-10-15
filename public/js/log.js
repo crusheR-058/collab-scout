@@ -4,23 +4,39 @@ import { STAGES } from "./stages.js";
 import { state } from "./state.js";
 
 // Show an entity's name where the model passed its Qloo ID.
-const named = (input, labels = {}) => {
+export const named = (input, labels = {}) => {
   const swap = (value) =>
     Array.isArray(value) ? value.map(swap) : typeof value === "string" ? (labels[value] ?? labels[value.toUpperCase()] ?? value) : value;
   return Object.fromEntries(Object.entries(input).map(([field, value]) => [field, swap(value)]));
 };
 
-const describeCall = (name, input) => {
-  const signals = [...list(input.signals), ...list(input.signal_tags)].join(", ");
+// "urn:tag:genre:music:indian_indie" reads as "indian indie".
+const tagName = (tag) => String(tag).split(":").pop().replace(/_/g, " ");
+
+// Filters and place change what a call means, so they belong in its description.
+const scope = (input) =>
+  [
+    list(input.include_tags).length && `tagged ${list(input.include_tags).map(tagName).join(" or ")}`,
+    list(input.exclude_tags).length && `not ${list(input.exclude_tags).map(tagName).join(" or ")}`,
+    input.signal_location && `audience in ${input.signal_location}`,
+    input.filter_location && `located in ${input.filter_location}`,
+    input.demographic && `for ${input.demographic}`,
+  ]
+    .filter(Boolean)
+    .map((part) => `, ${part}`)
+    .join("");
+
+export const describeCall = (name, input) => {
+  const signals = [...list(input.signals), ...list(input.signal_tags).map(tagName)].join(", ");
   switch (name) {
     case "qloo_describe":
       return `Look up ${input.entity}`;
     case "qloo_find_tags":
       return `Search Qloo tags for ${quote(input.query)}`;
     case "qloo_recommend":
-      return `Find ${input.target_type}s this audience likes${signals ? `, from ${signals}` : ""}`;
+      return `Find ${input.target_type}s this audience likes${signals ? `, from ${signals}` : ""}${scope(input)}`;
     case "qloo_rank":
-      return `Rank ${list(input.options).length} candidates against the audience`;
+      return `Rank ${list(input.options).length} candidates against the audience${signals ? ` of ${signals}` : ""}${scope(input)}`;
     case "qloo_where_popular":
       return `Find where ${input.entity} is popular in ${input.within}`;
     case "qloo_compare_audiences":
@@ -90,9 +106,10 @@ export const addCall = (event) => {
   );
   const node = row("pending", title, result, raw);
   const entry = { kind: "call", title, result: event.name, status: "pending" };
-  state.calls.set(event.id, { node, result, raw, entry });
+  state.calls.set(event.id, { node, result, raw, entry, reused: event.reused });
   state.entries.push(entry);
-  state.callCount += 1;
+  // A repeated identical call reuses the earlier result and costs no Qloo request.
+  if (!event.reused) state.callCount += 1;
   $("#log-list").append(node);
   showCount();
   scrollLog();
@@ -102,7 +119,7 @@ export const finishCall = (event) => {
   const call = state.calls.get(event.id);
   if (!call) return;
   call.node.dataset.status = event.status;
-  call.result.textContent = `${describeResult(event)} · ${event.name}`;
+  call.result.textContent = `${describeResult(event)} · ${call.reused ? "reused earlier result" : event.name}`;
   Object.assign(call.entry, { status: event.status, result: call.result.textContent });
   if (event.summary) call.raw.append(el("p", { text: "Qloo said" }), el("pre", { text: event.summary }));
   if (event.requests?.length) {

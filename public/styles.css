@@ -1450,6 +1450,130 @@ select {
   margin-top: 0.75rem;
 }
 
+/* ---------- Brief: where each claim comes from ---------- */
+.key,
+.basis {
+  max-width: 44rem;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+.key {
+  padding: 0.875rem 1.125rem;
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.basis {
+  margin-top: 0.5rem;
+}
+
+.records {
+  margin-top: 0.875rem;
+  max-width: 44rem;
+}
+
+.records summary {
+  width: fit-content;
+  cursor: pointer;
+  font: 500 0.6875rem/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--violet);
+}
+
+.records summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.records ul {
+  margin-top: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.records li,
+.records-none {
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
+.records li + li {
+  margin-top: 0.375rem;
+}
+
+.records-none {
+  margin-top: 0.875rem;
+}
+
+/* ---------- Brief: cross-category scan ---------- */
+.table-wrap {
+  margin-top: 0.875rem;
+  overflow-x: auto;
+}
+
+.opportunities {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.opportunities caption {
+  margin-bottom: 0.5rem;
+  text-align: left;
+  font: 500 0.6875rem/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--violet);
+}
+
+.opportunities th,
+.opportunities td {
+  padding: 0.5rem 0.625rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+.opportunities thead th {
+  font: 400 0.625rem/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.opportunities tbody th {
+  font-weight: 700;
+}
+
+.opportunities td {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.opportunities tr[data-chosen] {
+  background: var(--paper);
+}
+
+.place-check {
+  display: block;
+  margin-top: 0.5rem;
+  font: 400 0.6875rem/1.4 var(--mono);
+  color: var(--violet);
+}
+
+.place-check.unchecked {
+  width: fit-content;
+  padding: 0.125rem 0.4375rem;
+  border-radius: 5px;
+  background: var(--flag);
+  color: var(--ink);
+}
+
 .copy-pitch {
   margin-top: 0.75rem;
 }
