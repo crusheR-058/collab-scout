@@ -19,7 +19,15 @@ export async function* serverEvents(url, body, signal) {
     const frames = buffer.split("\n\n");
     buffer = frames.pop();
     for (const frame of frames) {
-      if (frame.startsWith("data: ")) yield JSON.parse(frame.slice(6));
+      if (!frame.startsWith("data: ")) continue;
+      let event;
+      try {
+        event = JSON.parse(frame.slice(6));
+      } catch {
+        // One garbled event should not end the scout; skip it.
+        continue;
+      }
+      if (typeof event?.type === "string") yield event;
     }
   }
 }
