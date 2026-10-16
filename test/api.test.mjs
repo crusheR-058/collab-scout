@@ -295,6 +295,38 @@ test("the owner answers, gets a brief and a plan, each saved as a version", asyn
   assert.equal(after.live, true);
 });
 
+test("a share link shows the brief and plans to anyone until the owner turns it off", async () => {
+  assert.equal((await call(`/api/research/${researchId}/share`, { cookie: bob, method: "POST" })).status, 404);
+  const { token } = await (await call(`/api/research/${researchId}/share`, { cookie: alice, method: "POST" })).json();
+  assert.match(token, /^[\w-]{32}$/);
+  // Sharing again shows the same link, and the saved scout says it is shared.
+  assert.equal((await (await call(`/api/research/${researchId}/share`, { cookie: alice, method: "POST" })).json()).token, token);
+  assert.equal((await (await call(`/api/research/${researchId}`, { cookie: alice })).json()).share, token);
+
+  // Signed out: the page and the brief, but not the brief text or the field log.
+  assert.equal((await call(`/s/${token}`)).status, 200);
+  const shared = await (await call(`/api/shared/${token}`)).json();
+  assert.deepEqual(Object.keys(shared), ["brief", "plans"]);
+  assert.equal(shared.brief.partners.length, 3);
+  assert.equal(shared.plans[0].partner, "One");
+
+  assert.equal((await call(`/api/research/${researchId}/share`, { cookie: alice, method: "DELETE" })).status, 204);
+  assert.equal((await call(`/api/shared/${token}`)).status, 404);
+  assert.equal((await call("/api/shared/not-a-token")).status, 404);
+});
+
+test("a saved brief can be checked for changes; comparing needs a scan", async () => {
+  const checked = await (await call(`/api/research/${researchId}/check`, { cookie: alice, method: "POST" })).json();
+  // Qloo never returned these partners, so there is nothing to look up.
+  assert.ok(checked.partners.every((partner) => partner.problem === "not matched in Qloo"));
+  assert.equal((await call(`/api/research/${researchId}/check`, { cookie: bob, method: "POST" })).status, 404);
+
+  assert.equal((await call(`/api/research/${researchId}/compare`, { cookie: alice, method: "POST", body: {} })).status, 400);
+  const compared = await call(`/api/research/${researchId}/compare`, { cookie: alice, method: "POST", body: { market: "Delhi" } });
+  assert.equal(compared.status, 409);
+  assert.equal((await compared.json()).code, "NO_SCAN");
+});
+
 test("saved research and sign-ins survive a restart; the open session does not", async () => {
   await stop();
   await start();

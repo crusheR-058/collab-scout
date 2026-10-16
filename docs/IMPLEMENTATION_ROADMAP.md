@@ -95,12 +95,22 @@ Persistence, ownership, a stored research lifecycle, a uniform API and observabi
 
 A scroll-driven landing page (3D hero, pinned walkthrough of the four steps, a carousel of the four views) and Amazon Cognito sign-in in front of the app, with no guest access. Verified with 93 offline tests including sign-in against a fake Cognito, real Cognito sign-in and sign-out on localhost and in production, and the landing page on desktop, phone and reduced motion. Details in [ARCHITECTURE.md](ARCHITECTURE.md).
 
+### Sharing and follow-up: done
+
+- **Share link**: a read-only `/s/<token>` page for the latest brief and plans, revocable by the owner; the brief text, field log and account stay private.
+- **First message**: each plan can carry a short outreach message to the partner, with a copy button and a reminder that Qloo has no contacts.
+- **Check for changes**: each partner's latest Qloo trend (20 weekly points) beside the brief's, on demand. Qloo only. There is no scheduled re-check or email: on its own a weekly job would only help someone who opens the app, and sending email needs an SES sender identity.
+- **Confirm the starting names**: before the first scan the user confirms whose audience it reads.
+- **Compare**: the brief's scan run again for another market and/or with one more name (an ambiguous name takes Qloo's most popular candidate and says so), side by side with overlaps marked. Qloo only; not saved.
+- **Export**: Markdown download beside copy and print to PDF.
+- **Verified**: 100 offline tests; the offline UI check covers share, check, compare and the first message; a live run confirmed the seed question, a plan's message, a trends check and a comparison against real Qloo (a 90-day trends range returned no points, so a year is asked for).
+
 ## Not done, and why
 
 - **No baseline comparison without Qloo** in the bake-off. A fair measure of a general-knowledge answer needs a human rating rubric; the bake-off measures grounding, not quality.
 - **Multi-entity "collision" concepts and broader scenario comparison.** The size-preference re-ranking covers one scenario dimension with the same evidence; other scenarios would need new Qloo runs and a comparison view.
 - **Long scouts are still expensive.** Measured on a live coffee scout (2026-10-16, 11 steps, 144,543 input tokens): about 47% is the system prompt and tool definitions (about 6,200 tokens) re-sent on every step, and GLM 5 on Bedrock refuses prompt caching. Older Qloo results are now replayed without resolved alternatives or full trend series, which saves about 6% on that run. Dropping their descriptions as well saved 13% on paper, but in one live run with that the model described six partners again (13 steps, 25 Qloo calls), possibly because of it, so descriptions stay. Fewer steps, or a model with prompt caching, are the larger levers.
-- **The model still decides which names to resolve**, so a seed can be a single café rather than the brand. The scan shows seed categories so this is visible.
+- **The model still decides which names to resolve**, so a seed can be a single café rather than the brand. The user now confirms the seeds before the first scan, which catches this; a seed a revision adds later is not asked about again.
 
 ## Known limitations
 

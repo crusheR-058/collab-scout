@@ -2010,6 +2010,38 @@ button.link:hover {
 }
 
 /* ---------- Print: the brief only ---------- */
+/* A shared brief: one column, without the app around it. */
+.shared {
+  width: min(100%, 64rem);
+  margin: 0 auto;
+  padding: 1rem var(--gutter) 4rem;
+}
+
+.share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0 clamp(1.5rem, 3vw, 2.5rem) 1.25rem;
+}
+
+.share-url {
+  flex: 1 1 18rem;
+}
+
+.share .basis,
+.share .form-hint {
+  flex-basis: 100%;
+}
+
+.compare-form {
+  margin: 0.875rem 0;
+}
+
+.compare-form input + label {
+  margin-top: 0.875rem;
+}
+
 @media print {
   body {
     background: #fff;
@@ -2025,6 +2057,9 @@ button.link:hover {
   .radar-controls,
   .radar-detail,
   .plan-button,
+  .share,
+  .check-button,
+  .compare-form,
   .plans > section:first-child {
     display: none !important;
   }

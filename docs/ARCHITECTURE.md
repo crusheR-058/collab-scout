@@ -32,6 +32,8 @@ Browser ──POST + server-sent events──▶ Express (src/server.mjs)
 | `public/js/main.js` | Page flow: start, stream, questions, brief, plans, history |
 | `public/js/brief.js` | The finished scout and its tabs |
 | `public/js/radar.js`, `dna.js`, `plans.js`, `evidence.js` | Opportunities, Audience DNA, Plans tabs and shared pieces |
+| `public/js/compare.js` | The Compare section: a rescan beside this scout's table |
+| `pages/share.html`, `public/js/share.js` | The read-only shared brief, drawn by the same `renderBrief` without the app's actions |
 
 ## API
 
@@ -45,6 +47,11 @@ Browser ──POST + server-sent events──▶ Express (src/server.mjs)
 | `GET /api/research` | | `{ research: [...] }`: this browser's scouts, newest first, with status and title |
 | `GET /api/research/:id` | | `{ research, versions, brief, plans, events, live }`: the latest brief, the newest plan per partner, the field log, and whether it can still be revised |
 | `GET /api/research/:id/versions/:n` | | `{ version }`: one stored brief or plan, as delivered |
+| `POST /api/research/:id/share` | | `{ token }`: the scout's read-only link, `/s/<token>`, created once and shown again after |
+| `DELETE /api/research/:id/share` | | 204; the link stops working |
+| `GET /api/shared/:token` | | `{ brief, plans }`, open without sign-in; not the brief text, field log or account |
+| `POST /api/research/:id/check` | | `{ checked, partners }`: each partner's latest Qloo trend beside the brief's. Qloo only, no model |
+| `POST /api/research/:id/compare` | `{ market?, add? }` | `{ scan, added? }`: the brief's scan run again for another market and/or with one more name. Qloo only, no model |
 | `DELETE /api/research/:id` | | 204; stops it if running |
 | `DELETE /api/me` | | 204; deletes everything this account has saved and ends its sessions |
 | `GET /api/metrics` | `Authorization: Bearer <METRICS_TOKEN>` | Counts from stored research and this process; 404 without the token |
@@ -76,7 +83,7 @@ Considered and not chosen now:
 
 The trade-off: the data lives on one instance's disk, backed up by nightly snapshots (see Backups), and running two app instances would need Postgres. All SQL is in `src/db.mjs`, so a move to Postgres changes one module and its migrations.
 
-Schema (migrations 1 and 2): `owners` (one per Cognito account, with its email);  `auth_sessions` (hashed session tokens with expiry); `research` (one row per scout, status from a fixed list, token and Qloo call totals); `versions` (each delivered brief or plan, numbered, never rewritten, with the scoring method version); `events` (the field log: every tool call and result, note, question and error, which is also the audit trail). Foreign keys cascade from owner to research to versions and events. Migrations are append-only and tracked in `PRAGMA user_version`.
+Schema (migrations 1 to 3): `owners` (one per Cognito account, with its email);  `auth_sessions` (hashed session tokens with expiry); `shares` (at most one read-only link per research, a random 192-bit token kept as is so the owner can see the link again); `research` (one row per scout, status from a fixed list, token and Qloo call totals); `versions` (each delivered brief or plan, numbered, never rewritten, with the scoring method version); `events` (the field log: every tool call and result, note, question and error, which is also the audit trail). Foreign keys cascade from owner to research to versions and events. Migrations are append-only and tracked in `PRAGMA user_version`.
 
 Research states: `running`, `needs_input`, `delivered`, `failed`, `cancelled`, `expired` (waited too long for an answer) and `interrupted` (open when the server restarted). On start, the server marks every `running` and `needs_input` row interrupted, so nothing stays active forever.
 
@@ -91,6 +98,7 @@ A sign-in becomes a server-side session: a random 256-bit token in an `HttpOnly;
 | Route | Signed out |
 | --- | --- |
 | `/`, `/signin`, `/api/health`, `GET /api/me` (answers `{ email: null }`) | Open |
+| `/s/:token`, `GET /api/shared/:token` | Open to anyone with the link, until the owner turns it off; an unknown or revoked token answers 404 |
 | `/scout` | Redirects to `/signin` |
 | Every other `/api/` route | 401 `SIGN_IN_REQUIRED` |
 | `POST /auth/signout` | Deletes the session, clears the cookie and redirects to Cognito's logout, which returns to `/` |
@@ -115,10 +123,10 @@ Logs are JSON lines: `request` (method, path, status, ms, request ID), `research
 
 ## Research lifecycle
 
-1. A brief creates a research record (random ID, owned by this browser) and starts a run. The model resolves names, asks when a match is ambiguous, scans categories, ranks a shortlist, checks trends and places, and delivers a brief.
+1. A brief creates a research record (random ID, owned by this browser) and starts a run. The model resolves names, asks when a match is ambiguous, scans categories, ranks a shortlist, checks trends and places, and delivers a brief. Before the first scan the app asks the user to confirm the seeds it will read the audience through (for example "Blue Bottle Coffee (brand)"); the answer goes back to the model as the held scan's result, and the model calls the scan again or resolves someone else.
 2. Every Qloo result is recorded in the session's evidence ledger as it arrives, and every progress event is stored as it is sent. The delivered brief is grounded against the ledger, then stored as a version.
 3. After a brief, the live session stays in memory for revisions and plans until it has been idle for 30 minutes or reaches its limits. Each revision or plan is a new version; earlier ones are kept.
-4. Once the live session is gone, the stored record, its versions and its field log remain readable by the owner until deleted.
+4. Once the live session is gone, the stored record, its versions and its field log remain readable by the owner until deleted. A stored brief can still be shared, checked for trend changes and compared with another market or audience, because those use Qloo and the stored scan, not the model.
 
 ## Limits per scout
 

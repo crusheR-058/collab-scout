@@ -21,6 +21,7 @@ const SCAN_ROWS_FOR_MODEL = 15;
 const MODEL_TIMEOUT_MS = 120 * 1000;
 // Steps and calls are bounded, but a run also gets a wall-clock limit.
 const RUN_TIMEOUT_MS = 8 * 60 * 1000;
+export const SEEDS_CONFIRMED = "Yes, scan with these";
 const WRAP_UP =
   "You are almost out of steps. Call deliver_brief now with what the results so far support, " +
   "and list anything you could not check under limitations.";
@@ -86,8 +87,14 @@ export const planRequest = (partner, note) =>
 // asked through ask_user is answered as its tool result; a plain-text question,
 // or a change the user wants to a brief, gets a text reply.
 export const answer = (session, text) => {
-  const { results, askId } = session.pending;
-  const reply = askId ? toolResult(askId, text) : { text };
+  const { results, askId, confirmSeeds } = session.pending;
+  // Anything but a no counts as confirmed; after a no, the next scan asks again.
+  if (confirmSeeds && !/^\s*no\b/i.test(text)) session.seedsConfirmed = true;
+  const said = confirmSeeds
+    ? `Not run yet: the user was asked to confirm these seeds and answered ${JSON.stringify(text)}. ` +
+      "If they confirmed, call scan_opportunities again with the same input. If not, resolve who they mean first."
+    : text;
+  const reply = askId ? toolResult(askId, said) : { text };
   session.messages.push({ role: "user", content: [...results, reply] });
   session.pending = undefined;
 };
@@ -240,6 +247,104 @@ const planScan = ({ toolUseId, input }, session) => {
   };
 };
 
+// A planned scan's scored table and audience profile, from its jobs' results.
+const scoredScan = (plan, envelopeOf) => ({
+  ...scoreScan({
+    calls: plan.jobs.filter((job) => job.category).map((job) => ({ category: job.category, envelope: envelopeOf(job) })),
+    seeds: plan.seeds,
+    prefer: plan.prefer,
+  }),
+  profile: profileFrom(envelopeOf(plan.jobs.find((job) => job.part === "tags")), envelopeOf(plan.jobs.find((job) => job.part === "demographics"))),
+  location: plan.location,
+  city: plan.city,
+  at: new Date().toISOString(),
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isoDate = (time) => new Date(time).toISOString().slice(0, 10);
+const typeOf = (category) => String(category ?? "").replace(/^urn:entity:/, "");
+
+// A delivered scan run again with Qloo only, no model: for another market,
+// and/or with one more seed. `add` is a name; Qloo's first match is taken and
+// returned, so the user can see who it read.
+export const rescan = async (scan, { market, add }, qloo = callQloo) => {
+  let seeds = scan.seeds;
+  let added;
+  if (add) {
+    const found = await qloo("qloo_describe", { entity: add });
+    if (found.status === "error") return { problem: "Qloo did not answer. Try again in a minute." };
+    const item = Array.isArray(found.results) ? found.results.find((result) => result?.entity_id && typeof result.name === "string") : undefined;
+    // An ambiguous name comes back as candidates instead: take the most popular,
+    // which the page names, so the user sees who was read.
+    const candidates = (found.resolution?.issues ?? []).flatMap((issue) => issue?.candidates ?? []).filter((candidate) => candidate?.id && typeof candidate.name === "string");
+    const likeliest = candidates.toSorted((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
+    if (item) added = { id: item.entity_id, name: item.name, category: item.subtype ?? found.interpretation?.entity?.type };
+    else if (likeliest) added = { id: likeliest.id, name: likeliest.name, category: likeliest.type, of: candidates.length };
+    else return { problem: `Qloo found no match for ${add}.` };
+    // A full list makes room by dropping the last seed, never the first, which supplies the demographics.
+    seeds = [...seeds.filter((seed) => String(seed.id).toUpperCase() !== String(added.id).toUpperCase()).slice(0, MAX_SEEDS - 1), added];
+  }
+  const input = {
+    seeds: seeds.map((seed) => seed.id),
+    categories: scan.categories.map(({ category }) => category),
+    prefer: scan.prefer,
+    signal_location: market ?? scan.location,
+    // A venue city only belongs to the market it was given for.
+    venue_city: market ? undefined : scan.city,
+  };
+  // The seeds come from the stored scan, so they stand in for the scout's evidence.
+  const plan = planScan({ toolUseId: "compare", input }, { entities: new Map(seeds.map((seed) => [seed.id, seed])) });
+  if (plan.problem) return { problem: plan.problem };
+  const envelopes = new Map(await Promise.all(plan.jobs.map(async (job) => [job, await qloo(job.name, job.input)])));
+  // Otherwise an outage would look like a scan with no overlap.
+  if (plan.jobs.filter((job) => job.category).every((job) => envelopes.get(job).status === "error")) {
+    return { problem: "Qloo did not answer for any category. Try again in a minute." };
+  }
+  return { scan: scoredScan(plan, (job) => envelopes.get(job)), added };
+};
+
+// Partners' latest Qloo trends, beside the trend the brief recorded, so a saved
+// brief can be checked for changes. Qloo calls only. Qloo returns weekly points,
+// newest first, up to `limit`; a 90-day range returned none in testing, so ask
+// for a year and keep the latest 20 weeks.
+export const checkTrends = async (partners, qloo = callQloo, now = Date.now()) => {
+  const range = { start_date: isoDate(now - 365 * DAY_MS), end_date: isoDate(now), limit: 20 };
+  const groups = new Map();
+  for (const partner of partners) {
+    const type = typeOf(partner.category);
+    if (!partner.id || !CATEGORIES.includes(type)) continue;
+    groups.set(type, [...(groups.get(type) ?? []), partner.id]);
+  }
+  const found = new Map();
+  const failed = new Set();
+  const calls = [...groups].flatMap(([type, ids]) =>
+    // Qloo takes at most five entities per trends call.
+    Array.from({ length: Math.ceil(ids.length / 5) }, (_, index) => ({ type, ids: ids.slice(index * 5, index * 5 + 5) })),
+  );
+  await Promise.all(
+    calls.map(async ({ type, ids }) => {
+      const envelope = await qloo("qloo_trends", { entities: ids, entity_type: type, ...range });
+      if (envelope.status === "error") ids.forEach((id) => failed.add(id));
+      else recordEntities(found, "qloo_trends", envelope);
+    }),
+  );
+  const current = (id) => [...found.values()].find((entity) => String(entity.id).toUpperCase() === String(id).toUpperCase())?.trend;
+  return {
+    checked: range.end_date,
+    partners: partners.map((partner) => {
+      const now = partner.id ? current(partner.id) : undefined;
+      const problem = !partner.id
+        ? "not matched in Qloo"
+        : !CATEGORIES.includes(typeOf(partner.category))
+          ? "Qloo has no trends for this type"
+          : failed.has(partner.id)
+            ? "Qloo did not answer"
+            : !now && "no trend data from Qloo";
+      return { name: partner.name, before: partner.trend, now, problem: problem || undefined };
+    }),
+  };
+};
+
 // What the model reads back: the top of the table, without our bookkeeping.
 const scanForModel = (scan) => ({
   scoring_version: scan.version,
@@ -375,7 +480,15 @@ export async function* run(
         "and two to four other categories, so the user gets the audience profile and the cross-category table. Then deliver the brief again.";
       brief = undefined;
     }
-    const scans = calls.filter((call) => call.name === SCAN_OPPORTUNITIES).map((call) => ({ call, ...planScan(call, session) }));
+    let scans = calls.filter((call) => call.name === SCAN_OPPORTUNITIES).map((call) => ({ call, ...planScan(call, session) }));
+    // Before the first scan the user confirms whose audience it reads, since a
+    // name can resolve to the wrong entity, such as one café instead of the brand.
+    let confirm;
+    if (!session.seedsConfirmed && scans.some((scan) => !scan.problem)) {
+      if (!ask && !deliveries.length) confirm = scans.find((scan) => !scan.problem);
+      const held = "Scan not run: the user confirms the seeds before the first scan. Call scan_opportunities once, on its own.";
+      scans = scans.filter((scan) => scan !== confirm).map((scan) => (scan.problem ? scan : { call: scan.call, problem: held }));
+    }
     const ownCalls = calls.filter((call) => call.name.startsWith("qloo_"));
     // Scan jobs run like the model's own Qloo calls: same budget, cache, log and evidence.
     const qlooCalls = [...ownCalls, ...scans.flatMap((scan) => scan.jobs ?? [])];
@@ -418,19 +531,7 @@ export async function* run(
         scanResults.push(toolResult(scan.call.toolUseId, scan.problem, true));
         continue;
       }
-      const envelope = (job) => outcomes[qlooCalls.indexOf(job)].envelope;
-      const part = (name) => envelope(scan.jobs.find((job) => job.part === name));
-      session.scan = {
-        ...scoreScan({
-          calls: scan.jobs.filter((job) => job.category).map((job) => ({ category: job.category, envelope: envelope(job) })),
-          seeds: scan.seeds,
-          prefer: scan.prefer,
-        }),
-        profile: profileFrom(part("tags"), part("demographics")),
-        location: scan.location,
-        city: scan.city,
-        at: new Date().toISOString(),
-      };
+      session.scan = scoredScan(scan, (job) => outcomes[qlooCalls.indexOf(job)].envelope);
       scanResults.push(toolResult(scan.call.toolUseId, JSON.stringify(scanForModel(session.scan))));
       yield { type: "text", text: `Scored ${session.scan.candidates.length} candidates across ${session.scan.categories.length} categories.` };
     }
@@ -468,6 +569,16 @@ export async function* run(
       // The model sometimes sends the options as a JSON string, or no question text.
       const question = String(ask.input.question ?? "").trim() || said || "The scout needs more detail.";
       yield { type: "question", question, options: strings(ask.input.options) };
+      return;
+    }
+    if (confirm) {
+      session.pending = { results, askId: confirm.call.toolUseId, confirmSeeds: true };
+      const names = confirm.seeds.map((seed) => (typeOf(seed.category) ? `${seed.name} (${typeOf(seed.category).replace(/_/g, " ")})` : seed.name));
+      yield {
+        type: "question",
+        question: `Before scanning, I'll read your audience through ${names.join(", ")}. Is that who you mean?`,
+        options: [SEEDS_CONFIRMED, "No, I mean someone else"],
+      };
       return;
     }
 

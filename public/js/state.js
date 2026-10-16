@@ -7,6 +7,8 @@ export const state = {
   brief: undefined,
   // Partnership plans for this scout, newest first.
   plans: [],
+  // The share link's token, if this scout is shared.
+  share: null,
   calls: new Map(),
   callCount: 0,
   notes: [],
@@ -20,6 +22,7 @@ export const resetState = (briefText) => {
     briefText,
     brief: undefined,
     plans: [],
+    share: null,
     callCount: 0,
     notes: [],
     lastError: undefined,

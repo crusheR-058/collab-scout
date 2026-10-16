@@ -22,7 +22,7 @@ const TEXT_FIELDS = ["brand", "goal", "audience_summary", "pitch"];
 // Garbled tool JSON can swallow the fields after a string into it, such as a
 // pitch that ends with `", "limitations": [...]`.
 const LEAKED_FIELD =
-  /"(brand|goal|audience_summary|partners|locations|pitch|limitations|partner|concept|fit_evidence|audience_hypothesis|value_for_you|value_for_partner|formats|considerations|risks|questions|next_research|validation)"\s*:/;
+  /"(brand|goal|audience_summary|partners|locations|pitch|limitations|partner|concept|fit_evidence|audience_hypothesis|value_for_you|value_for_partner|formats|considerations|risks|questions|next_research|validation|outreach_message)"\s*:/;
 // Double-escaped JSON leaves a literal backslash-n where a line break was meant.
 const unescape = (text) => text.replace(/\\n/g, "\n");
 
@@ -67,6 +67,9 @@ export const checkPlan = (input) => {
     (step) => typeof step?.test === "string" && typeof step.measure === "string" && typeof step.success === "string",
   );
   if (!validation.length) problems.push("validation must list tests, each with test, measure and success");
+  // Optional, so a plan without it is still accepted rather than costing a retry.
+  const outreach = typeof input.outreach_message === "string" ? unescape(input.outreach_message).trim() : "";
+  if (LEAKED_FIELD.test(outreach)) problems.push("outreach_message contains other fields; send each field as its own JSON value");
   if (problems.length) return { problem: `Plan not accepted: ${problems.join("; ")}. Call deliver_plan again.` };
 
   return {
@@ -74,6 +77,7 @@ export const checkPlan = (input) => {
       ...Object.fromEntries(PLAN_TEXT.map((field) => [field, unescape(input[field]).trim()])),
       ...Object.fromEntries(PLAN_LISTS.map((field) => [field, strings(input[field])])),
       validation: validation.map(({ test, measure, success }) => ({ test, measure, success })),
+      ...(outreach && { outreach_message: outreach }),
     },
   };
 };

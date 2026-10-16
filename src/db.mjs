@@ -59,6 +59,13 @@ const MIGRATIONS = [
    );
    CREATE INDEX auth_sessions_by_owner ON auth_sessions(owner_id);
    CREATE INDEX auth_sessions_by_expiry ON auth_sessions(expires_at);`,
+  // A read-only link to one scout's latest brief and plans. The token is the
+  // only key, so the owner can show the link again until they revoke it.
+  `CREATE TABLE shares (
+     token TEXT PRIMARY KEY,
+     research_id TEXT NOT NULL UNIQUE REFERENCES research(id) ON DELETE CASCADE,
+     created_at TEXT NOT NULL
+   );`,
 ];
 
 const now = () => new Date().toISOString();
@@ -124,6 +131,14 @@ export const openDatabase = (path) => {
          WHERE e.research_id = ? AND r.owner_id = ? ORDER BY e.id`,
     ),
     deleteResearch: statement("DELETE FROM research WHERE id = ? AND owner_id = ?"),
+    // Only research this owner holds can be shared.
+    addShare: statement(
+      `INSERT INTO shares (token, research_id, created_at) SELECT ?, id, ? FROM research WHERE id = ? AND owner_id = ?
+         ON CONFLICT(research_id) DO NOTHING`,
+    ),
+    share: statement("SELECT s.token FROM shares s JOIN research r ON r.id = s.research_id WHERE s.research_id = ? AND r.owner_id = ?"),
+    deleteShare: statement("DELETE FROM shares WHERE research_id = (SELECT id FROM research WHERE id = ? AND owner_id = ?)"),
+    shared: statement("SELECT r.id, r.owner_id FROM shares s JOIN research r ON r.id = s.research_id WHERE s.token = ?"),
     interrupt: statement(
       "UPDATE research SET status = 'interrupted', error = 'The server restarted while this scout was open.', updated_at = ? WHERE status IN ('running', 'needs_input')",
     ),
@@ -172,6 +187,14 @@ export const openDatabase = (path) => {
     getVersion: (ownerId, id, version) => parse(sql.version.get(id, ownerId, version)),
     listEvents: (ownerId, id) => sql.events.all(id, ownerId).map(parse),
     deleteResearch: (ownerId, id) => sql.deleteResearch.run(id, ownerId).changes > 0,
+    // The existing link, or a new one with `token`; undefined if not this owner's.
+    share: (ownerId, id, token) => {
+      sql.addShare.run(token, now(), id, ownerId);
+      return sql.share.get(id, ownerId)?.token;
+    },
+    getShare: (ownerId, id) => sql.share.get(id, ownerId)?.token,
+    unshare: (ownerId, id) => sql.deleteShare.run(id, ownerId).changes > 0,
+    shared: (token) => sql.shared.get(token),
     // Nothing survives a restart in memory, so open scouts cannot resume.
     interruptOpen: () => sql.interrupt.run(now()).changes,
     expire: (id) => sql.expire.run(now(), id),

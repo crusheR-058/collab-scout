@@ -146,6 +146,7 @@ const deliverPlan = {
       "questions",
       "next_research",
       "validation",
+      "outreach_message",
     ],
     properties: {
       partner: { type: "string", description: "The partner's exact name as Qloo returned it." },
@@ -167,6 +168,12 @@ const deliverPlan = {
           required: ["test", "measure", "success"],
           properties: { test: { type: "string" }, measure: { type: "string" }, success: { type: "string" } },
         },
+      },
+      outreach_message: {
+        type: "string",
+        description:
+          "A first message the user can send the partner, under 150 words: who the user is, the audience overlap Qloo shows, " +
+          "the concept and one small first step. No invented contacts, names of people, budgets, figures or past relationships.",
       },
     },
   },

@@ -15,7 +15,7 @@ const STATUS = {
 const date = (time) => new Date(time).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 // History is a convenience: if the server cannot be reached, the page still works.
-const request = async (url, options) => {
+export const request = async (url, options) => {
   const response = await fetch(url, options);
   if (response.status === 401) location.assign("/signin");
   if (!response.ok && response.status !== 204) throw new Error((await response.json().catch(() => ({}))).error ?? `The server answered ${response.status}.`);
