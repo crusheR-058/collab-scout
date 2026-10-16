@@ -2,7 +2,7 @@
 import { renderBrief } from "./brief.js";
 import { $, el, list, plain, quote } from "./dom.js";
 import { focusForm, prefill, setupForm } from "./form.js";
-import { forgetBrowser, loadScout, showHistory } from "./history.js";
+import { forgetBrowser, loadScout, request, showHistory } from "./history.js";
 import { addCall, addNote, finishCall, resetLog, toggleLog } from "./log.js";
 import { advance, resetProgress, showMeta, stopClock } from "./progress.js";
 import { BRIEF_STAGE, STAGES, stageOf } from "./stages.js";
@@ -56,11 +56,27 @@ const showEnded = (title, text) => {
   showPanel("ended");
 };
 
+// Calls about the saved scout on screen, which work after its live session ends.
+const savedCall = (path, body) =>
+  request(`api/research/${encodeURIComponent(state.sessionId)}/${path}`, {
+    method: body === null ? "DELETE" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
 // `view` picks the tab and the plan to open.
 const showBrief = (view = {}) => {
   renderBrief(state.brief, {
     onRefine: state.live ? refine : undefined,
     onPlan: state.live ? requestPlan : undefined,
+    onCheck: () => savedCall("check", {}),
+    onCompare: (changes) => savedCall("compare", changes),
+    share: state.share,
+    onShare: async () => (state.share = (await savedCall("share", {})).token),
+    onUnshare: async () => {
+      await savedCall("share", null);
+      state.share = null;
+    },
     onRestart: restart,
     onStartAgain: () => {
       restart();
@@ -200,7 +216,7 @@ async function openScout(id) {
     return;
   }
   resetState(saved.research.brief_text);
-  Object.assign(state, { sessionId: id, live: saved.live, brief: saved.brief, plans: saved.plans });
+  Object.assign(state, { sessionId: id, live: saved.live, brief: saved.brief, plans: saved.plans, share: saved.share });
   $("#log-brief-text").textContent = saved.research.brief_text;
   foldLogOnPhone();
   showView("work");

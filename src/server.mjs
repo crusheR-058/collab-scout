@@ -1,9 +1,9 @@
 // HTTP API. Each scout streams its events to the browser as server-sent events
 // and is stored, with everything it delivered, for the browser that owns it.
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { MODEL, answer, cancel, newSession, planRequest, run } from "./agent.mjs";
+import { MODEL, answer, cancel, checkTrends, newSession, planRequest, rescan, run } from "./agent.mjs";
 import { openDatabase } from "./db.mjs";
 import { counters, log } from "./log.mjs";
 import { authConfigured, cognitoOrigin, finishSignIn, signInUrl, signOut, userOf } from "./auth.mjs";
@@ -23,6 +23,9 @@ const MAX_NOTE_CHARS = 500;
 // Answers to questions and revisions together, so one scout cannot run forever.
 const MAX_ANSWERS = 12;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// 24 random bytes in base64url.
+const SHARE_TOKEN = /^[A-Za-z0-9_-]{32}$/;
+const MAX_MARKET_CHARS = 100;
 // Stored as the field log; deliveries are stored as versions instead.
 const LOGGED = new Set(["tool_call", "tool_result", "text", "question", "error"]);
 
@@ -158,7 +161,8 @@ app.use((req, res, next) => {
     res.set("Cache-Control", "no-store");
     const started = Date.now();
     res.on("finish", () =>
-      log("info", "request", { request: req.id, method: req.method, path: req.path, status: res.statusCode, ms: Date.now() - started }),
+      // A share token is a key to the brief, so it stays out of the logs.
+      log("info", "request", { request: req.id, method: req.method, path: req.path.replace(/^\/api\/shared\/.*/, "/api/shared/:token"), status: res.statusCode, ms: Date.now() - started }),
     );
   }
   next();
@@ -181,6 +185,9 @@ app.get(["/auth/signin", "/auth/google"], (req, res) => {
   if (!authConfigured) return res.status(503).type("text").send("Sign-in is not configured on this server.");
   res.redirect(303, signInUrl(res, { google: GOOGLE && req.path === "/auth/google" }));
 });
+
+// A shared brief: open to anyone with the link, read-only.
+app.get("/s/:token", (req, res) => res.sendFile("share.html", { root: PAGES }));
 
 app.get("/auth/callback", async (req, res) => {
   if (!authConfigured) return res.redirect(303, "/signin");
@@ -209,6 +216,26 @@ app.get("/api/metrics", (req, res, next) => (METRICS_TOKEN ? next() : fail(res, 
 
 // Who is signed in, if anyone: the landing page asks without needing a session.
 app.get("/api/me", (req, res) => res.json({ email: req.user?.email ?? null }));
+
+// The latest brief and the newest plan for each partner, newest first.
+const delivered = (ownerId, researchId) => {
+  const versions = db.listVersions(ownerId, researchId);
+  const brief = versions.filter((version) => version.kind === "brief").at(-1);
+  const plans = [];
+  for (const version of versions.filter((entry) => entry.kind === "plan").reverse()) {
+    const { payload } = db.getVersion(ownerId, researchId, version.version);
+    if (!plans.some((plan) => plan.partner === payload.partner)) plans.push(payload);
+  }
+  return { versions, brief: brief && db.getVersion(ownerId, researchId, brief.version).payload, plans };
+};
+
+// What a share link shows: the brief and plans, not the owner's brief text or field log.
+app.get("/api/shared/:token", (req, res) => {
+  const found = SHARE_TOKEN.test(req.params.token) ? db.shared(req.params.token) : undefined;
+  const { brief, plans } = found ? delivered(found.owner_id, found.id) : {};
+  if (!brief) return fail(res, 404, "NOT_FOUND", "This link has been turned off or never existed.");
+  res.json({ brief, plans });
+});
 
 app.use("/api", (req, res, next) => {
   // Metrics have their own token.
@@ -318,21 +345,11 @@ app.get("/api/research/:id", (req, res) => {
   const found = ownedResearch(req, res);
   if (!found) return;
   const { ownerId, research } = found;
-  const versions = db.listVersions(ownerId, research.id);
-  const latest = (kind) => versions.filter((version) => version.kind === kind).at(-1);
-  const brief = latest("brief");
-  // The newest plan for each partner, newest first.
-  const plans = [];
-  for (const version of versions.filter((entry) => entry.kind === "plan").reverse()) {
-    const { payload } = db.getVersion(ownerId, research.id, version.version);
-    if (!plans.some((plan) => plan.partner === payload.partner)) plans.push(payload);
-  }
   const session = liveSession(req);
   res.json({
     research,
-    versions,
-    brief: brief && db.getVersion(ownerId, research.id, brief.version).payload,
-    plans,
+    ...delivered(ownerId, research.id),
+    share: db.getShare(ownerId, research.id) ?? null,
     events: db.listEvents(ownerId, research.id),
     // Whether this server still holds the scout, so it can be revised.
     live: Boolean(session?.pending?.afterBrief && !session.running),
@@ -356,6 +373,50 @@ app.delete("/api/research/:id", (req, res) => {
   sessions.delete(found.research.id);
   db.deleteResearch(found.ownerId, found.research.id);
   res.status(204).end();
+});
+
+app.post("/api/research/:id/share", (req, res) => {
+  const found = ownedResearch(req, res);
+  if (!found) return;
+  if (!delivered(found.ownerId, found.research.id).brief) return fail(res, 409, "NO_BRIEF", "Only a scout with a brief can be shared.");
+  res.json({ token: db.share(found.ownerId, found.research.id, randomBytes(24).toString("base64url")) });
+});
+
+app.delete("/api/research/:id/share", (req, res) => {
+  const found = ownedResearch(req, res);
+  if (!found) return;
+  db.unshare(found.ownerId, found.research.id);
+  res.status(204).end();
+});
+
+// Checks and comparisons call Qloo without the model; they count against the
+// same hourly allowance as scouts.
+const latestBrief = (req, res, { scan = false } = {}) => {
+  const found = ownedResearch(req, res);
+  if (!found) return undefined;
+  const { brief } = delivered(found.ownerId, found.research.id);
+  if (!brief) return void fail(res, 409, "NO_BRIEF", "This scout has no brief.");
+  if (scan && !brief.opportunities) return void fail(res, 409, "NO_SCAN", "This brief has no scan to compare against.");
+  if (!underLimit(req.ip)) return void fail(res, 429, "RATE_LIMITED", `You can run ${SCOUTS_PER_HOUR} scouts and checks an hour. Try again later.`);
+  return brief;
+};
+
+app.post("/api/research/:id/check", async (req, res) => {
+  const brief = latestBrief(req, res);
+  if (brief) res.json(await checkTrends(brief.partners));
+});
+
+app.post("/api/research/:id/compare", async (req, res) => {
+  const market = text(req.body?.market);
+  const add = text(req.body?.add);
+  if ((!market && !add) || market.length > MAX_MARKET_CHARS || add.length > MAX_NAME_CHARS) {
+    return fail(res, 400, "INVALID_COMPARISON", `Send a market of up to ${MAX_MARKET_CHARS} characters, a name to add, or both.`);
+  }
+  const brief = latestBrief(req, res, { scan: true });
+  if (!brief) return;
+  const result = await rescan(brief.opportunities, { market: market || undefined, add: add || undefined });
+  if (result.problem) return fail(res, 422, "NO_COMPARISON", result.problem);
+  res.json(result);
 });
 
 // Delete everything this person has saved. Their sessions go with it, so

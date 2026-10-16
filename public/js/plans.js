@@ -25,7 +25,10 @@ export const planMarkdown = (plan, brand) =>
     `## Validation plan\n${list(plan.validation)
       .map((step) => `- **${step.test}**: measure ${step.measure}; success looks like ${step.success}`)
       .join("\n")}`,
-  ].join("\n\n");
+    plan.outreach_message && `## First message\n${plan.outreach_message}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
 const refinePlan = (plan, onPlan) => {
   const input = el("input", { id: "plan-refine", type: "text", autocomplete: "off", maxLength: 500, placeholder: "Make it a small event instead, or cut the budget" });
@@ -99,6 +102,13 @@ const planView = (plan, { brand, onPlan }) =>
         ),
       ),
     ),
+    plan.outreach_message &&
+      section(
+        "A first message to send",
+        el("p", { class: "key", text: "Written by the scout. Check every claim, and add the right contact yourself; Qloo has no contact details." }),
+        el("p", { class: "pitch", text: plan.outreach_message }),
+        copyButton("quiet copy-pitch", "Copy message", "Message copied", () => plan.outreach_message),
+      ),
     el(
       "div",
       { class: "form-row" },

@@ -1,5 +1,6 @@
 // Draws a finished scout: the brief, and tabs for the audience profile, the
 // cross-category opportunities and partnership plans.
+import { compareSection } from "./compare.js";
 import { dnaTab } from "./dna.js";
 import { $, el, list } from "./dom.js";
 import { TRENDS, copyButton, matchMark, photo, records, score, section, categoryName } from "./evidence.js";
@@ -102,6 +103,90 @@ const renderPartner = (partner, onPlan) =>
     ),
   );
 
+const ARROWS = { rising: "↗ rising", falling: "↘ falling", flat: "→ no movement" };
+const trendText = (trend) => (trend?.direction ? `${ARROWS[trend.direction]}, rank ${trend.to?.rank ?? "?"} on ${trend.to?.date ?? "?"}` : "no trend recorded");
+
+// Asks Qloo for each partner's trend now, beside what the brief recorded.
+const checkSection = (onCheck) => {
+  const result = el("div", { role: "status" });
+  const button = el("button", {
+    class: "quiet check-button",
+    type: "button",
+    text: "Check Qloo trends now",
+    onclick: async () => {
+      button.disabled = true;
+      result.replaceChildren(el("p", { class: "basis", text: "Asking Qloo…" }));
+      try {
+        const { checked, partners } = await onCheck();
+        result.replaceChildren(
+          el(
+            "div",
+            { class: "table-wrap" },
+            el(
+              "table",
+              { class: "opportunities" },
+              el("caption", { text: `Qloo's latest weekly trends, checked ${checked}` }),
+              el("thead", {}, el("tr", {}, ...["Partner", "In this brief", "Now"].map((head) => el("th", { scope: "col", text: head })))),
+              el(
+                "tbody",
+                {},
+                ...partners.map((partner) =>
+                  el("tr", {}, el("th", { scope: "row", text: partner.name }), el("td", { text: trendText(partner.before) }), el("td", { text: partner.problem ?? trendText(partner.now) })),
+                ),
+              ),
+            ),
+          ),
+        );
+      } catch (error) {
+        result.replaceChildren(el("p", { class: "form-hint", text: error.message }));
+      }
+      button.disabled = false;
+    },
+  });
+  return section(
+    "Has anything changed?",
+    el("p", { class: "basis", text: "Qloo's trend for each partner now, against the one in this brief. It uses Qloo only, not the scout, and counts toward your hourly scouts." }),
+    button,
+    result,
+  );
+};
+
+// A read-only link anyone can open; the owner can turn it off.
+const shareControl = ({ share, onShare, onUnshare }) => {
+  const box = el("div", { class: "share" });
+  const hint = el("p", { class: "form-hint", role: "status" });
+  const attempt = (action) => async () => {
+    try {
+      draw(await action());
+    } catch (error) {
+      hint.textContent = error.message;
+    }
+  };
+  const draw = (token) => {
+    hint.textContent = "";
+    if (!token) {
+      box.replaceChildren(el("button", { class: "quiet", type: "button", text: "Create a share link", onclick: attempt(onShare) }), hint);
+      return;
+    }
+    const url = `${location.origin}/s/${token}`;
+    box.replaceChildren(
+      el("input", { class: "share-url", type: "text", readOnly: true, value: url, "aria-label": "Share link" }),
+      copyButton("quiet", "Copy link", "Link copied", () => url),
+      el("button", { class: "quiet", type: "button", text: "Stop sharing", onclick: attempt(async () => (await onUnshare(), null)) }),
+      el("p", { class: "basis", text: "Anyone with this link can read this brief and its plans without signing in. Your brief text and field log stay private." }),
+      hint,
+    );
+  };
+  draw(share);
+  return box;
+};
+
+const download = (name, text) => {
+  const link = el("a", { href: URL.createObjectURL(new Blob([text], { type: "text/markdown" })), download: name });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+};
+
 // Which Qloo call the affinity bars come from, so a reader knows they compare.
 const basisNote = (brief) => {
   const basis = brief.affinity_basis;
@@ -136,7 +221,7 @@ const refineForm = (onRefine) => {
   );
 };
 
-const briefTab = (brief, partners, { onRefine, onStartAgain, onPlan }) =>
+const briefTab = (brief, partners, { onRefine, onStartAgain, onPlan, onCheck }) =>
   el(
     "div",
     {},
@@ -147,6 +232,7 @@ const briefTab = (brief, partners, { onRefine, onStartAgain, onPlan }) =>
       section("Your audience", el("p", { text: brief.audience_summary })),
       partners.length &&
         section("Partners, ranked", basisNote(brief), el("ol", { class: "partners" }, ...partners.map((partner) => renderPartner(partner, onPlan)))),
+      onCheck && partners.some((partner) => partner.verified) && checkSection(onCheck),
       list(brief.locations).length &&
         section(
           "Where the overlap is strongest",
@@ -176,12 +262,13 @@ const briefTab = (brief, partners, { onRefine, onStartAgain, onPlan }) =>
     ),
     onRefine
       ? refineForm(onRefine)
-      : el(
-          "div",
-          { class: "refine" },
-          el("p", { text: "This scout is saved in your browser. Its live session has ended, so it can't be revised." }),
-          el("button", { class: "primary", type: "button", text: "Start again from this brief", onclick: onStartAgain }),
-        ),
+      : onStartAgain &&
+          el(
+            "div",
+            { class: "refine" },
+            el("p", { text: "This scout is saved to your account. Its live session has ended, so it can't be revised." }),
+            el("button", { class: "primary", type: "button", text: "Start again from this brief", onclick: onStartAgain }),
+          ),
   );
 
 // Tabs follow the ARIA tab pattern: arrow keys move between them.
@@ -210,9 +297,10 @@ const tabBar = (tabs, current, onSelect) => {
 };
 
 // `options`: onRefine and onPlan exist only while the server holds the scout;
+// onCheck, onCompare and onShare only in the app, not on a shared page;
 // `tab` and `openPlan` say what to show.
 export const renderBrief = (brief, options) => {
-  const { onRestart, onPlan, plans = [], tab = "brief", openPlan } = options;
+  const { onRestart, onPlan, onCompare, onShare, plans = [], tab = "brief", openPlan } = options;
   const partners = list(brief.partners);
   const panel = $("#panel-brief");
   const scan = brief.opportunities;
@@ -229,7 +317,13 @@ export const renderBrief = (brief, options) => {
   const content = {
     brief: () => briefTab(brief, partners, options),
     dna: () => el("div", { class: "brief-body" }, dnaTab(scan)),
-    opportunities: () => el("div", { class: "brief-body" }, opportunitiesTab(scan, { partnerIds: partners.map((partner) => partner.id).filter(Boolean), onPlan })),
+    opportunities: () =>
+      el(
+        "div",
+        { class: "brief-body" },
+        opportunitiesTab(scan, { partnerIds: partners.map((partner) => partner.id).filter(Boolean), onPlan }),
+        onCompare && compareSection(scan, onCompare),
+      ),
     plans: () =>
       el(
         "div",
@@ -268,9 +362,16 @@ export const renderBrief = (brief, options) => {
       { class: "brief-actions" },
       copyButton("primary", "Copy brief", "Brief copied", () => briefMarkdown({ ...brief, partners }, plans)),
       el("button", { class: "quiet", type: "button", text: "Print or save as PDF", onclick: () => window.print() }),
-      el("button", { class: "quiet", type: "button", text: "Start a new scout", onclick: onRestart }),
+      el("button", {
+        class: "quiet",
+        type: "button",
+        text: "Download Markdown",
+        onclick: () => download(`${brief.brand} x ${partners[0]?.name ?? "brief"}.md`, briefMarkdown({ ...brief, partners }, plans)),
+      }),
+      onRestart && el("button", { class: "quiet", type: "button", text: "Start a new scout", onclick: onRestart }),
       state.callCount > 0 && el("p", { text: `Built from the ${callCountText()} in the field log` }),
     ),
+    onShare && shareControl(options),
   ];
   // replaceChildren would print `false`, so drop it first.
   panel.replaceChildren(...parts.filter(Boolean));

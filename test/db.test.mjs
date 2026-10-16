@@ -38,6 +38,20 @@ test("versions are numbered in order and never overwritten", () => {
   assert.equal(db.listResearch("alice")[0].title, "B × P2");
 });
 
+test("only the owner can share a scout, once, and the link goes with the scout", () => {
+  const db = fresh();
+  assert.equal(db.share("bob", "r1", "t-bob"), undefined);
+  assert.equal(db.share("alice", "r1", "t-1"), "t-1");
+  assert.equal(db.share("alice", "r1", "t-2"), "t-1");
+  assert.deepEqual({ ...db.shared("t-1") }, { id: "r1", owner_id: "alice" });
+  assert.equal(db.unshare("bob", "r1"), false);
+  assert.equal(db.unshare("alice", "r1"), true);
+  assert.equal(db.shared("t-1"), undefined);
+  db.share("alice", "r1", "t-3");
+  db.deleteResearch("alice", "r1");
+  assert.equal(db.shared("t-3"), undefined);
+});
+
 test("the schema refuses bad states and orphans", () => {
   const db = fresh();
   assert.throws(() => db.setStatus("r1", "done"), /CHECK/);

@@ -166,6 +166,9 @@ test("checkPlan accepts a full plan and repairs lists sent as text", () => {
   const { plan: checked } = checkPlan({ ...plan("Test Artist A"), formats: '"Pop-up", "Playlist"' });
   assert.deepEqual(checked.formats, ["Pop-up", "Playlist"]);
   assert.equal(checked.validation[0].success, "200 in two weeks");
+  // The first message is optional: without it the plan is still accepted.
+  assert.equal(checked.outreach_message, undefined);
+  assert.equal(checkPlan({ ...plan("Test Artist A"), outreach_message: " Hello \\n there " }).plan.outreach_message, "Hello \n there");
 });
 
 test("checkPlan sends back a plan with missing parts or garbled fields", () => {

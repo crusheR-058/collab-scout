@@ -75,7 +75,9 @@ const delivered = {
     at: new Date().toISOString(),
   },
 };
-const plans = ["Sample Artist 1", "Sample Artist 2"].map((partner) => groundPlan(checkPlan(plan(partner)).plan, entities));
+const plans = ["Sample Artist 1", "Sample Artist 2"].map((partner, n) =>
+  groundPlan(checkPlan({ ...plan(partner), ...(n === 0 && { outreach_message: "Hi, we are a small roastery whose audience overlaps yours in Qloo. A sample first message." }) }).plan, entities),
+);
 
 // Saved the way the server saves a scout: a signed-in owner, the research,
 // its versions and its field log. The browser gets that owner's session cookie.
@@ -149,6 +151,31 @@ try {
   await page.screenshot({ path: `${out}/brief.png`, fullPage: true });
   await checkPhone("brief");
 
+  // Without Qloo the check reaches the server and comes back as a message, not a crash.
+  await page.click(".check-button");
+  await page.waitForFunction(() => !document.querySelector(".check-button").disabled);
+  console.log(`check for changes: ${(await page.locator(".check-button + [role=status]").innerText()).replace(/\s+/g, " ").slice(0, 160)}`);
+
+  // Share, then open the link signed out.
+  await page.click("button >> text=Create a share link");
+  const shareUrl = await page.inputValue(".share-url");
+  console.log(`share link: ${shareUrl.replace(/[\w-]{32}$/, "<token>")}`);
+  const stranger = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const shared = await stranger.newPage();
+  shared.on("pageerror", (error) => problems.push(`shared page error: ${error.message}`));
+  await shared.goto(shareUrl);
+  await shared.waitForSelector("#panel-brief:not([hidden])");
+  console.log(
+    `shared page: ${await shared.locator(".partner").count()} partners, ${await shared.locator("[role=tab]").count()} tabs, ` +
+      `app actions shown: ${await shared.locator(".refine, .share, .check-button, .compare-form, button >> text=Start a new scout").count()}`,
+  );
+  await shared.screenshot({ path: `${out}/shared.png`, fullPage: true });
+  await page.click("button >> text=Stop sharing");
+  await shared.reload();
+  await shared.waitForSelector("#share-missing:not([hidden])");
+  console.log(`after stop sharing: ${await shared.textContent("#share-missing-text")}`);
+  await stranger.close();
+
   await open("dna");
   console.log(`dna: ${await count(".tag-group")} tag groups, ${await count(".skew")} skew bars, ${await count(".dna .limits li")} gaps`);
   await page.screenshot({ path: `${out}/dna.png`, fullPage: true });
@@ -171,6 +198,10 @@ try {
   await page.keyboard.press("ArrowRight");
   console.log(`  ArrowRight moves to: ${await page.evaluate(() => document.activeElement.id)}`);
   await open("opportunities");
+  await page.fill("#compare-market", "Delhi");
+  await page.click(".compare-form button[type=submit]");
+  await page.waitForFunction(() => !document.querySelector(".compare-form button[type=submit]").disabled);
+  console.log(`compare without Qloo: ${(await page.locator(".compare-form + [role=status]").innerText()).replace(/\s+/g, " ").slice(0, 200)}`);
   await page.screenshot({ path: `${out}/opportunities.png`, fullPage: true });
   await checkPhone("opportunities");
 
@@ -178,6 +209,8 @@ try {
   console.log(`plans: ${await count("#tabpanel-plans .segmented button")} plan switches, compare rows ${await count(".compare tbody tr")}, sections ${await count(".plan section")}`);
   await page.click(".plans .segmented button >> nth=1");
   console.log(`  opened: ${await page.textContent(".plan-head h3")}`);
+  await page.click(".plans .segmented button >> nth=0");
+  console.log(`  first message shown for ${await page.textContent(".plan-head h3")}: ${await page.locator(".plan h3 >> text=A first message to send").count()}`);
   await page.screenshot({ path: `${out}/plans.png`, fullPage: true });
   await checkPhone("plans");
 
