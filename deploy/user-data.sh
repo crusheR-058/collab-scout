@@ -34,6 +34,11 @@ AWS_REGION=${REGION}
 BEDROCK_MODEL_ID=zai.glm-5
 PORT=8787
 SCOUTS_PER_HOUR=8
+APP_URL=https://d3269rncf4uvz.cloudfront.net
+COGNITO_DOMAIN=https://collab-scout-592eeb.auth.ap-south-1.amazoncognito.com
+COGNITO_CLIENT_ID=713p8v3hoe51mfhbqjosns6h8t
+COGNITO_USER_POOL_ID=ap-south-1_FQQMfc2Yh
+COGNITO_GOOGLE=1
 EOF
 set -x
 chmod 600 /etc/collab-scout.env

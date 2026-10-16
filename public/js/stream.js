@@ -6,6 +6,7 @@ export async function* serverEvents(url, body, signal) {
     body: JSON.stringify(body),
     signal,
   });
+  if (response.status === 401) location.assign("/signin");
   if (!response.ok) {
     const { error } = await response.json().catch(() => ({}));
     throw new Error(error ?? `The server answered ${response.status}.`);

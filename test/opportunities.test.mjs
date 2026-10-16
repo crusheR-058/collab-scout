@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scoreScan } from "../src/opportunities.mjs";
+import { rankCandidates, scoreScan } from "../public/js/opportunities.js";
 import { entity, ok } from "./fixtures.mjs";
 
 const SEED = { id: "00000000-0000-4000-8000-0000000000AA", name: "Seed Brand", category: "urn:entity:brand" };
@@ -94,4 +94,12 @@ test("one unusually unpopular candidate does not squash everyone else's size", (
   const scan = scoreScan({ calls, seeds: [SEED], prefer: "emerging" });
   const size = Object.fromEntries(scan.candidates.map((candidate) => [candidate.name, candidate.size]));
   assert.deepEqual(size, { "Place 0": 0, "Place 1": 0.33, "Place 2": 0.67, "Place 3": 1 });
+});
+
+test("re-ranking stored candidates under another preference matches scoring from scratch", () => {
+  const either = scoreScan({ calls: [brands, podcasts], seeds: [SEED] });
+  const emerging = scoreScan({ calls: [brands, podcasts], seeds: [SEED], prefer: "emerging" });
+  const reranked = rankCandidates(either.candidates, either.seeds, "emerging");
+  assert.deepEqual(reranked.candidates, emerging.candidates);
+  assert.deepEqual(reranked.weights, emerging.weights);
 });

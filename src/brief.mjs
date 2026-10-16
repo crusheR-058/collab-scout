@@ -21,7 +21,8 @@ export const strings = (value) => (asList(value) ?? []).filter((item) => typeof 
 const TEXT_FIELDS = ["brand", "goal", "audience_summary", "pitch"];
 // Garbled tool JSON can swallow the fields after a string into it, such as a
 // pitch that ends with `", "limitations": [...]`.
-const LEAKED_FIELD = /"(brand|goal|audience_summary|partners|locations|pitch|limitations)"\s*:/;
+const LEAKED_FIELD =
+  /"(brand|goal|audience_summary|partners|locations|pitch|limitations|partner|concept|fit_evidence|audience_hypothesis|value_for_you|value_for_partner|formats|considerations|risks|questions|next_research|validation)"\s*:/;
 // Double-escaped JSON leaves a literal backslash-n where a line break was meant.
 const unescape = (text) => text.replace(/\\n/g, "\n");
 
@@ -46,6 +47,33 @@ export const checkBrief = (input) => {
       partners: partners.map((partner) => ({ ...partner, evidence: strings(partner.evidence) })),
       locations: (asList(input.locations) ?? []).filter((place) => typeof place?.name === "string"),
       limitations: strings(input.limitations),
+    },
+  };
+};
+
+const PLAN_TEXT = ["partner", "concept", "audience_hypothesis", "value_for_you", "value_for_partner"];
+const PLAN_LISTS = ["fit_evidence", "formats", "considerations", "risks", "questions", "next_research"];
+
+export const checkPlan = (input) => {
+  const problems = [];
+  for (const field of PLAN_TEXT) {
+    if (typeof input[field] !== "string" || !input[field].trim()) problems.push(`${field} must be text`);
+    else if (LEAKED_FIELD.test(input[field])) problems.push(`${field} contains other fields; send each field as its own JSON value`);
+  }
+  for (const field of PLAN_LISTS) {
+    if (!strings(input[field]).length) problems.push(`${field} must be a list of text`);
+  }
+  const validation = (asList(input.validation) ?? []).filter(
+    (step) => typeof step?.test === "string" && typeof step.measure === "string" && typeof step.success === "string",
+  );
+  if (!validation.length) problems.push("validation must list tests, each with test, measure and success");
+  if (problems.length) return { problem: `Plan not accepted: ${problems.join("; ")}. Call deliver_plan again.` };
+
+  return {
+    plan: {
+      ...Object.fromEntries(PLAN_TEXT.map((field) => [field, unescape(input[field]).trim()])),
+      ...Object.fromEntries(PLAN_LISTS.map((field) => [field, strings(input[field])])),
+      validation: validation.map(({ test, measure, success }) => ({ test, measure, success })),
     },
   };
 };
@@ -125,6 +153,34 @@ export const recordEntities = (entities, tool, envelope, call = {}) => {
   }
 };
 
+// The seeds' audience as Qloo describes it: the tags that characterise the
+// seeds, and how the first seed's audience skews by age and gender against
+// Qloo's baseline. Only fields of the expected shape are kept.
+const skews = (value) =>
+  value && typeof value === "object"
+    ? Object.fromEntries(Object.entries(value).filter(([, skew]) => number(skew) !== undefined).map(([band, skew]) => [band, number(skew)]))
+    : {};
+
+export const profileFrom = (tags, demographics) => {
+  const audience = Array.isArray(demographics.results) ? demographics.results[0]?.query : undefined;
+  return {
+    tags: {
+      status: tags.status,
+      error: tags.error?.code,
+      items: (Array.isArray(tags.results) ? tags.results : [])
+        .filter((tag) => typeof tag?.name === "string" && typeof tag.type === "string")
+        .map((tag) => ({ name: tag.name.trim(), type: tag.type, affinity: number(tag.affinity) })),
+    },
+    demographics: {
+      status: demographics.status,
+      error: demographics.error?.code,
+      entity: demographics.interpretation?.entity?.name,
+      age: skews(audience?.age),
+      gender: skews(audience?.gender),
+    },
+  };
+};
+
 // Heatmap cells named by places.mjs, so the brief's locations can be checked.
 export const recordPlaces = (places, envelope) => {
   const entity = envelope.interpretation?.entity?.name;
@@ -148,6 +204,26 @@ export const entityLabels = (entities, input) => {
     if (ids.has(String(entity.id).toUpperCase())) labels[entity.id] = entity.name;
   }
   return labels;
+};
+
+// A plan's partner is checked like a brief's: Qloo's name, image and records
+// when Qloo returned it in this scout, a flag when it did not.
+export const groundPlan = (plan, entities) => {
+  const entity = entities.get(key(plan.partner));
+  if (!entity) return { ...plan, verified: false, observations: [] };
+  return {
+    ...plan,
+    partner: entity.name,
+    verified: true,
+    id: entity.id,
+    category: entity.category,
+    description: entity.description,
+    popularity: entity.popularity,
+    image: entity.image,
+    trend: entity.trend,
+    observations: entity.observations,
+    at: new Date().toISOString(),
+  };
 };
 
 // The one Qloo call whose results include the most partners, preferring a

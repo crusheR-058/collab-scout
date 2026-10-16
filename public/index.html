@@ -3,16 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Collab Scout</title>
-    <meta
-      name="description"
-      content="Find the partner your audience already loves, with Qloo taste data behind every pick."
-    />
+    <title>Collab Scout · find the partner your audience already loves</title>
+    <meta name="description" content="Collab Scout reads Qloo's taste data to find artists, brands, venues and shows your audience shares, and shows the evidence behind every pick." />
     <meta property="og:title" content="Collab Scout" />
-    <meta
-      property="og:description"
-      content="Find the partner your audience already loves, with Qloo taste data behind every pick."
-    />
+    <meta property="og:description" content="Find the partner your audience already loves, with Qloo taste data behind every pick." />
     <meta property="og:type" content="website" />
     <link
       rel="icon"
@@ -24,177 +18,169 @@
       href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Martian+Mono:wght@400;500&family=Schibsted+Grotesk:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="landing.css" />
   </head>
-  <body data-view="idle">
-    <header class="top">
-      <a class="mark" href="./" aria-label="Collab Scout, start page">
-        <span class="mark-discs" aria-hidden="true"><i></i><i></i></span>
-        Collab Scout
-      </a>
-      <p class="status" aria-live="polite">
-        <span class="pill" id="status-qloo" data-state="checking">Qloo: checking</span>
-        <span class="pill" id="status-model" hidden></span>
-      </p>
+  <body class="landing">
+    <a class="skip" href="#story">Skip to how it works</a>
+
+    <!-- Hero: two audiences and the taste they share -->
+    <header class="stage" id="top" data-progress>
+      <nav class="nav wrap" aria-label="Main">
+        <a class="mark" href="/"><span class="discs" aria-hidden="true"><i></i><i></i></span>Collab Scout</a>
+        <a class="btn btn-sheet" href="/signin" data-cta>Sign in</a>
+      </nav>
+
+      <div class="hero wrap">
+        <div class="hero-copy">
+          <p class="eyebrow">Partnership scouting · Qloo taste data</p>
+          <h1>
+            <span class="line">Your audience</span>
+            <span class="line">already <em>knows</em></span>
+            <span class="line">your next</span>
+            <span class="line">partner.</span>
+          </h1>
+          <p class="lede">
+            Collab Scout reads where your audience's taste overlaps with artists, brands, venues and
+            shows, then shows you exactly which Qloo results each pick came from.
+          </p>
+          <div class="ctas">
+            <a class="btn btn-sheet btn-big" href="/signin" data-cta>Sign in to start scouting</a>
+            <a class="btn btn-ghost btn-big" href="#story">See how it works</a>
+          </div>
+        </div>
+
+        <div class="scene" aria-hidden="true">
+          <div class="orbit">
+            <div class="sphere you"><span>Your audience</span></div>
+            <div class="sphere them"><span>Their audience</span></div>
+            <div class="ring" id="ring">
+              <b>Music</b><b>Brands</b><b>Podcasts</b><b>Venues</b><b>TV</b><b>Books</b><b>Films</b><b>Games</b>
+            </div>
+          </div>
+          <figure class="log" id="log">
+            <div class="log-head"><b>Field log</b><span>a scout, step by step</span></div>
+            <ol class="entries">
+              <li><strong>Look up the names your audience loves</strong><span>qloo_describe</span></li>
+              <li><strong>Scan artists, brands, podcasts, venues</strong><span>scan_opportunities</span></li>
+              <li><strong>Rank the shortlist together</strong><span>qloo_rank</span></li>
+              <li><strong>Check momentum and the strongest cities</strong><span>qloo_trends</span></li>
+              <li class="done"><strong>Write the brief, evidence attached</strong><span>checked against Qloo</span></li>
+            </ol>
+          </figure>
+        </div>
+      </div>
+      <p class="scroll-hint wrap" aria-hidden="true">Scroll</p>
     </header>
 
     <main>
-      <!-- Start page -->
-      <section class="hero" id="view-idle">
-        <div class="hero-copy">
-          <h1>Find the partner your audience already loves.</h1>
-          <p class="lede">
-            Tell Collab Scout who you are and what kind of partner you want. It checks Qloo's
-            taste data for whose audience overlaps yours, and shows the evidence behind every
-            pick.
-          </p>
+      <!-- Pinned story: the four real steps of a scout -->
+      <section class="story" id="story" data-progress aria-labelledby="story-title">
+        <div class="story-pin">
+          <div class="story-copy wrap-left">
+            <h2 id="story-title">What a scout does, in order</h2>
+            <ol class="steps">
+              <li data-step="0" data-n="1">
+                <h3>Pins down who you mean</h3>
+                <p>Matches your brand, or the names your audience loves, to Qloo entities. When a name could mean two things, it asks you.</p>
+              </li>
+              <li data-step="1" data-n="2">
+                <h3>Scans across categories</h3>
+                <p>Music, brands, podcasts, venues and shows in one pass, each candidate scored with the same published method.</p>
+              </li>
+              <li data-step="2" data-n="3">
+                <h3>Ranks and checks</h3>
+                <p>Scores the shortlist together so the numbers compare, then checks momentum and where the overlap is strongest.</p>
+              </li>
+              <li data-step="3" data-n="4">
+                <h3>Plans the partnership</h3>
+                <p>A concept, what each side gets, the risks, the questions to ask first and a small test to run before you commit.</p>
+              </li>
+            </ol>
+          </div>
 
-          <form class="brief-form" id="brief-form">
-            <fieldset id="guided">
-              <legend>Your brief</legend>
-              <div class="field">
-                <label for="f-who">You are</label>
-                <input id="f-who" type="text" required maxlength="200" placeholder="a specialty coffee roastery in Pune" />
-              </div>
-              <div class="field-pair">
-                <div class="field">
-                  <label for="f-want">You want</label>
-                  <select id="f-want"></select>
-                </div>
-                <div class="field">
-                  <label for="f-goal">For <span class="optional">optional</span></label>
-                  <input id="f-goal" type="text" maxlength="200" placeholder="a limited-edition blend" />
-                </div>
-              </div>
-              <div class="field">
-                <label for="f-names">Names your audience loves</label>
-                <input id="f-names" type="text" required maxlength="300" placeholder="Blue Bottle Coffee, Bon Iver, Kinfolk" />
-                <p class="field-hint">
-                  Well-known brands, artists, authors or shows. Qloo reads your audience through
-                  these, so one or two real names matter more than a description.
-                </p>
-              </div>
-              <div class="field">
-                <label for="f-market">Market <span class="optional">optional</span></label>
-                <input id="f-market" type="text" maxlength="100" placeholder="India" />
-              </div>
-            </fieldset>
-
-            <fieldset id="free" hidden disabled>
-              <legend>Your brief</legend>
-              <div class="field">
-                <label for="brief">In your own words</label>
-                <textarea
-                  id="brief"
-                  name="brief"
-                  rows="5"
-                  maxlength="2000"
-                  required
-                  placeholder="Who you are, what kind of partner you want, names your audience loves, and where."
-                ></textarea>
-              </div>
-            </fieldset>
-
-            <div class="form-row">
-              <button class="primary" type="submit">Start scouting</button>
-              <button class="quiet" type="button" id="mode-toggle">Write it freely instead</button>
+          <div class="story-visual" aria-hidden="true">
+            <p class="illustration">Illustration · sample names</p>
+            <div class="panel p0">
+              <p class="panel-label">Who do you mean by “Blue Bottle”?</p>
+              <div class="choice picked"><b>Blue Bottle Coffee</b><span>brand</span></div>
+              <div class="choice"><b>Blue Bottle Coffee</b><span>café · San Francisco</span></div>
+              <div class="choice"><b>Blue Bottle</b><span>book</span></div>
             </div>
-            <p class="form-hint" id="form-hint" role="status"></p>
-          </form>
-
-          <div class="examples">
-            <p>Or start from one of these</p>
-            <ul id="examples"></ul>
+            <div class="panel p1">
+              <div class="merge">
+                <i class="m-you"></i><i class="m-them"></i>
+                <b class="fly f1">Music</b><b class="fly f2">Brands</b><b class="fly f3">Podcasts</b><b class="fly f4">Venues</b><b class="fly f5">TV</b>
+              </div>
+            </div>
+            <div class="panel p2">
+              <p class="panel-label">One shared ranking</p>
+              <div class="rank"><b>Sample artist</b><span class="bar"><i class="w1"></i></span></div>
+              <div class="rank"><b>Sample podcast</b><span class="bar"><i class="w2"></i></span></div>
+              <div class="rank"><b>Sample label</b><span class="bar"><i class="w3"></i></span></div>
+              <div class="rank"><b>Sample venue</b><span class="bar"><i class="w4"></i></span></div>
+              <p class="panel-note">→ No movement in Qloo trends · strongest near Mumbai</p>
+            </div>
+            <div class="panel p3">
+              <p class="panel-label">Partnership plan</p>
+              <h4>A limited-edition blend, launched at a live set</h4>
+              <dl>
+                <dt>Before you reach out</dt><dd>Are they releasing anything this season?</dd>
+                <dt>First test</dt><dd>A pre-order page, shared by both sides for two weeks</dd>
+              </dl>
+            </div>
           </div>
         </div>
-
-        <figure class="overlap" aria-label="Two audiences and the taste they share">
-          <div class="discs" data-state="apart">
-            <i class="disc you"></i>
-            <i class="disc them"></i>
-            <span class="disc-label label-you">Your audience</span>
-            <span class="disc-label label-them">Their audience</span>
-            <span class="disc-label label-both">What Qloo finds in common</span>
-          </div>
-        </figure>
       </section>
 
-      <section class="history" id="view-history" aria-labelledby="history-title" hidden>
-        <div class="history-head">
-          <h2 id="history-title">Your scouts</h2>
-          <p>Kept in this browser only.</p>
+      <!-- Four ways to read one scout, on a ring that turns with the page -->
+      <section class="reads" id="reads" data-progress aria-labelledby="reads-title">
+        <div class="reads-pin">
+          <h2 id="reads-title" class="wrap">One scout, four ways to read it</h2>
+          <div class="carousel">
+            <div class="ring3d" id="ring3d">
+              <article class="read r-brief"><b>Brief</b><p>Ranked partners with Qloo's scores, trends, the strongest cities and a pitch you can send.</p></article>
+              <article class="read r-dna"><b>Audience DNA</b><p>What Qloo associates with your audience, and who over- and under-indexes.</p></article>
+              <article class="read r-opps"><b>Opportunities</b><p>Every candidate across categories on one chart, re-ranked for emerging or established partners.</p></article>
+              <article class="read r-plans"><b>Plans</b><p>A concept, its risks, the questions to ask first and a small test to run.</p></article>
+            </div>
+          </div>
+          <ol class="rail" aria-hidden="true"><li>Brief</li><li>Audience DNA</li><li>Opportunities</li><li>Plans</li></ol>
         </div>
-        <ul id="history-list"></ul>
       </section>
 
-      <section class="steps" id="view-steps" aria-labelledby="steps-title">
-        <h2 id="steps-title">What a scout does, in order</h2>
-        <ol id="steps-list"></ol>
+      <section class="honest wrap" aria-label="What you can check and what it won't claim">
+        <div class="reveal">
+          <h2>What you can check</h2>
+          <ul>
+            <li><b>Where each number came from</b><span>Every score is Qloo's, tied to the call that returned it.</span></li>
+            <li><b>What was guessed</b><span>Names Qloo never returned are flagged, not hidden.</span></li>
+            <li><b>How the ranking works</b><span>A published method. Switch the size preference and see what moves.</span></li>
+          </ul>
+        </div>
+        <div class="reveal no">
+          <h2>What it won't pretend to know</h2>
+          <ul>
+            <li><b>Availability and fees</b><span>Qloo knows taste, not calendars or rates.</span></li>
+            <li><b>Sales</b><span>An overlap is a pattern across many people, not a forecast.</span></li>
+            <li><b>Any one person</b><span>Everything is aggregate. No personal data goes to Qloo.</span></li>
+          </ul>
+        </div>
       </section>
 
-      <!-- Scouting page -->
-      <section class="work" id="view-work" hidden>
-        <aside class="log" id="log" aria-labelledby="log-title">
-          <div class="log-brief">
-            <p class="eyebrow">Your brief</p>
-            <p id="log-brief-text"></p>
-            <button class="quiet" type="button" id="restart">Start a new scout</button>
-          </div>
-          <div class="log-head">
-            <h2 id="log-title">Field log</h2>
-            <p id="log-count">No Qloo calls yet</p>
-          </div>
-          <button class="quiet log-toggle" type="button" id="log-toggle"></button>
-          <ol class="log-list" id="log-list"></ol>
-        </aside>
-
-        <div class="stage" id="stage" aria-live="polite">
-          <div class="panel working" id="panel-working">
-            <div class="working-head">
-              <div class="discs" data-state="working" aria-hidden="true">
-                <i class="disc you"></i>
-                <i class="disc them"></i>
-              </div>
-              <div class="working-text">
-                <p class="working-title">Scouting</p>
-                <p class="working-meta" id="working-meta"></p>
-              </div>
-              <button class="quiet" type="button" id="stop">Stop scouting</button>
-            </div>
-            <ol class="stepper" id="stepper" aria-label="Progress"></ol>
-            <p class="working-note" id="working-note">Reading your brief.</p>
-          </div>
-
-          <form class="panel question" id="panel-question" hidden>
-            <p class="eyebrow">The scout needs your call</p>
-            <h2 id="question-text"></h2>
-            <div class="options" id="question-options"></div>
-            <label for="question-answer">Or answer in your own words</label>
-            <div class="answer-row">
-              <input id="question-answer" type="text" autocomplete="off" maxlength="500" />
-              <button class="primary" type="submit">Send answer</button>
-            </div>
-          </form>
-
-          <div class="panel ended" id="panel-ended" hidden>
-            <p class="eyebrow">No brief this time</p>
-            <h2 id="ended-title"></h2>
-            <p id="ended-text"></p>
-            <button class="primary" type="button" data-restart>Start a new scout</button>
-          </div>
-
-          <article class="panel brief" id="panel-brief" hidden></article>
+      <section class="final wrap reveal">
+        <div class="final-card">
+          <span class="final-discs" aria-hidden="true"><i></i><i></i></span>
+          <h2>Start with the names your audience loves.</h2>
+          <a class="btn btn-sheet btn-big" href="/signin" data-cta>Sign in to start scouting</a>
         </div>
       </section>
     </main>
 
-    <footer class="foot">
-      <p>
-        Qloo describes audiences in aggregate. An overlap is a pattern across many people, not a
-        prediction about any one person.
-      </p>
+    <footer class="foot wrap">
+      <p>Collab Scout · built for the Qloo Agentic Hackathon · Place names from GeoNames (CC BY 4.0) · <a href="/privacy.html">Privacy</a></p>
+      <p>Qloo describes audiences in aggregate. An overlap is a pattern across many people, not a prediction about any one person.</p>
     </footer>
 
-    <script type="module" src="js/main.js"></script>
+    <script type="module" src="js/landing.js"></script>
   </body>
 </html>
