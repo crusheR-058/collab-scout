@@ -130,7 +130,17 @@ pre {
   mix-blend-mode: multiply;
 }
 
+.account {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ink-soft);
+}
+
 .status {
+  margin-left: auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -819,6 +829,8 @@ input::placeholder {
 
 .brief-body {
   display: grid;
+  /* minmax(0, …) lets a wide table scroll inside its wrapper instead of widening the page. */
+  grid-template-columns: minmax(0, 1fr);
   gap: clamp(2rem, 4vw, 3rem);
   padding: clamp(1.5rem, 3vw, 2.5rem);
 }
@@ -1337,29 +1349,6 @@ select {
   color: var(--violet);
 }
 
-.call.stored .call-summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.125rem 0.625rem;
-  align-items: baseline;
-  padding: 0.5625rem 0.625rem;
-}
-
-.call.stored .call-summary::before {
-  content: "";
-  grid-row: span 2;
-  align-self: start;
-  width: 0.625rem;
-  height: 0.625rem;
-  margin-top: 0.375rem;
-  border-radius: 50%;
-  background: var(--violet);
-}
-
-.call.stored[data-status="error"] .call-summary::before {
-  background: var(--stop);
-}
-
 .log-toggle {
   display: none;
   margin: 0 1.25rem 1rem;
@@ -1387,7 +1376,8 @@ select {
   color: var(--ink);
 }
 
-.tag.match {
+.tag.match,
+.tag.chosen {
   color: var(--violet);
 }
 
@@ -1506,6 +1496,359 @@ select {
 
 .records-none {
   margin-top: 0.875rem;
+}
+
+/* ---------- Scout tabs ---------- */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 clamp(1.5rem, 3vw, 2.5rem);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.tabs [role="tab"] {
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--pink);
+  color: var(--ink);
+}
+
+.tabs [role="tab"]:hover {
+  color: var(--ink);
+}
+
+/* On a phone every tab stays in view rather than scrolling off the edge. */
+@media (max-width: 560px) {
+  .tabs {
+    flex-wrap: wrap;
+    margin: 0 1.25rem;
+  }
+
+  .tabs [role="tab"] {
+    padding: 0.5rem 0.625rem;
+    font-size: 0.9375rem;
+  }
+}
+
+/* Toggle buttons: category filters and size preference. */
+.chip[aria-pressed="false"] {
+  border-color: var(--line);
+  color: var(--ink-soft);
+  text-decoration: line-through;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--sheet);
+}
+
+.chip.static {
+  cursor: default;
+}
+
+.chip.static:hover {
+  background: none;
+  color: inherit;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.segmented {
+  display: inline-flex;
+  justify-self: start;
+  flex-wrap: wrap;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 0.4375rem 0.875rem;
+  border: 0;
+  background: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1.5px solid var(--ink);
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--sheet);
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+button.link:hover {
+  color: var(--blue);
+}
+
+.plan-button {
+  margin-top: 0.875rem;
+}
+
+/* ---------- Opportunity radar ---------- */
+.radar {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0.625rem;
+}
+
+.radar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.radar-figure {
+  margin: 0;
+}
+
+.radar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+}
+
+.radar-legend span:nth-child(3) {
+  margin-left: 0.75rem;
+}
+
+.key-dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--dot-other);
+}
+
+.key-dot[data-chosen] {
+  background: var(--dot-partner);
+}
+
+.radar-frame {
+  position: relative;
+}
+
+/* Validated as a pair against the sheet: CVD and contrast checks pass. */
+.radar {
+  --dot-other: #6250d6;
+  --dot-partner: #ff4f7b;
+}
+
+.radar-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.radar-chart .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.radar-chart .tick,
+.radar-chart .axis,
+.radar-chart .corner {
+  font: 400 11px var(--mono);
+  fill: var(--ink-soft);
+}
+
+.radar-chart .corner {
+  fill: var(--violet);
+}
+
+.radar-chart .dot {
+  fill: var(--dot-other);
+  stroke: var(--sheet);
+  stroke-width: 2;
+}
+
+.radar-chart .dot[data-chosen] {
+  fill: var(--dot-partner);
+}
+
+.radar-chart .ring {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+
+.radar-chart .hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.radar-tip {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  gap: 0.125rem;
+  width: max-content;
+  max-width: 13rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--sheet);
+  font-size: 0.8125rem;
+  pointer-events: none;
+}
+
+.radar-figure figcaption {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--ink-soft);
+}
+
+.radar-detail {
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.375rem 1rem;
+  margin: 0.75rem 0;
+  font-size: 0.9375rem;
+}
+
+.facts dt {
+  font: 400 0.6875rem/1.9 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.opportunities tr[data-selected] th,
+.opportunities tr[data-selected] td {
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+
+/* ---------- Audience DNA ---------- */
+.dna,
+.plans {
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+.dna h4,
+.skews h4 {
+  margin: 0.875rem 0 0.375rem;
+  font: 500 0.6875rem/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--violet);
+}
+
+.skew {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr) 3.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.1875rem 0;
+  font-size: 0.875rem;
+}
+
+.skew-track {
+  position: relative;
+  height: 0.625rem;
+  border-radius: 999px;
+  background: var(--paper);
+}
+
+/* The baseline. */
+.skew-track::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -0.25rem;
+  bottom: -0.25rem;
+  width: 1px;
+  background: var(--ink-soft);
+}
+
+.skew-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--violet);
+}
+
+.skew b {
+  font: 500 0.75rem/1 var(--mono);
+  text-align: right;
+}
+
+/* ---------- Partnership plans ---------- */
+.plan {
+  display: grid;
+  gap: clamp(1.25rem, 2.5vw, 2rem);
+}
+
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.plan-head h3 {
+  font: 900 1.75rem/1 var(--display);
+  text-transform: uppercase;
+}
+
+.plan .refine {
+  margin: 0;
+}
+
+.opportunities.compare td {
+  min-width: 14rem;
+  font-family: var(--body);
+  font-size: 0.875rem;
+  white-space: normal;
+}
+
+.opportunities.steps-table td {
+  font-family: var(--body);
+  font-size: 0.875rem;
+  white-space: normal;
 }
 
 /* ---------- Brief: cross-category scan ---------- */
@@ -1677,8 +2020,18 @@ select {
   .foot,
   .refine,
   .brief-actions,
-  .copy-pitch {
+  .copy-pitch,
+  .tabs,
+  .radar-controls,
+  .radar-detail,
+  .plan-button,
+  .plans > section:first-child {
     display: none !important;
+  }
+
+  /* Print every part of the scout, not only the open tab. */
+  .tabpanel[hidden] {
+    display: block !important;
   }
 
   .work {

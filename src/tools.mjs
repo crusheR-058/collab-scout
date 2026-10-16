@@ -1,10 +1,11 @@
 // Tools the model sees: Qloo's MCP tools plus three that the app handles itself.
-import { CATEGORIES, MAX_CATEGORIES, PREFERENCES } from "./opportunities.mjs";
+import { CATEGORIES, MAX_CATEGORIES, PREFERENCES } from "../public/js/opportunities.js";
 import { listQlooTools } from "./qloo.mjs";
 
 export const ASK_USER = "ask_user";
 export const DELIVER_BRIEF = "deliver_brief";
 export const SCAN_OPPORTUNITIES = "scan_opportunities";
+export const DELIVER_PLAN = "deliver_plan";
 
 const askUser = {
   name: ASK_USER,
@@ -33,7 +34,8 @@ const scanOpportunities = {
     "candidates across categories. The app runs one qloo_recommend per category and scores each candidate " +
     "with a fixed method: fit (its place in Qloo's order within its category), size (popularity against the " +
     "other candidates, by preference) and novelty (a category other than the seeds'). The scores are " +
-    "heuristic and only rank within this scan; compare a shortlist with qloo_rank.",
+    "heuristic and only rank within this scan; compare a shortlist with qloo_rank. The scan also reads " +
+    "the seeds' Qloo tags and the first seed's audience demographics, so it uses two calls beyond the categories.",
   inputSchema: {
     type: "object",
     required: ["seeds", "categories"],
@@ -53,7 +55,14 @@ const scanOpportunities = {
         enum: PREFERENCES,
         description: "emerging favours less popular candidates, established more popular ones, either ignores popularity. Default either.",
       },
-      signal_location: { type: "string", description: "Optional place that shifts which audience Qloo weighs." },
+      signal_location: {
+        type: "string",
+        description: "The user's market, when they named one. It shifts which audience Qloo weighs; it does not restrict results to that place.",
+      },
+      venue_city: {
+        type: "string",
+        description: "A city to keep place results inside, such as Mumbai. Use a city, not a country.",
+      },
     },
   },
 };
@@ -115,10 +124,58 @@ const deliverBrief = {
   },
 };
 
+const textList = (description) => ({ type: "array", items: { type: "string" }, description });
+
+const deliverPlan = {
+  name: DELIVER_PLAN,
+  description:
+    "Deliver a partnership plan for one partner, when the user asks for one. Base the fit on Qloo results " +
+    "in this conversation; everything else is your suggestion and will be shown as such.",
+  inputSchema: {
+    type: "object",
+    required: [
+      "partner",
+      "concept",
+      "fit_evidence",
+      "audience_hypothesis",
+      "value_for_you",
+      "value_for_partner",
+      "formats",
+      "considerations",
+      "risks",
+      "questions",
+      "next_research",
+      "validation",
+    ],
+    properties: {
+      partner: { type: "string", description: "The partner's exact name as Qloo returned it." },
+      concept: { type: "string", description: "The collaboration in two or three sentences." },
+      fit_evidence: textList("Qloo findings from this conversation that support the fit, each specific."),
+      audience_hypothesis: { type: "string", description: "Who the collaboration would reach, as a hypothesis to test." },
+      value_for_you: { type: "string", description: "What the user's brand gains." },
+      value_for_partner: { type: "string", description: "What the partner gains." },
+      formats: textList("Activation formats, such as a limited product, an event or content."),
+      considerations: textList("Practical execution points: timing, logistics, rights, who does what."),
+      risks: textList("Risks and unknowns, including what Qloo cannot show."),
+      questions: textList("Questions to answer before reaching out."),
+      next_research: textList("Further research worth doing, in Qloo or elsewhere."),
+      validation: {
+        type: "array",
+        description: "Small tests to run before committing, each with what to measure and what would count as success.",
+        items: {
+          type: "object",
+          required: ["test", "measure", "success"],
+          properties: { test: { type: "string" }, measure: { type: "string" }, success: { type: "string" } },
+        },
+      },
+    },
+  },
+};
+
 // Bedrock Converse tool format.
 const toolSpec = ({ name, description, inputSchema }) => ({
   toolSpec: { name, description, inputSchema: { json: inputSchema } },
 });
 
 export const loadTools = async () =>
-  [...(await listQlooTools()), askUser, scanOpportunities, deliverBrief].map(toolSpec);
+  [...(await listQlooTools()), askUser, scanOpportunities, deliverBrief, deliverPlan].map(toolSpec);

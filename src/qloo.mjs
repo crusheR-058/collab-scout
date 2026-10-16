@@ -2,6 +2,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { setTimeout as sleep } from "node:timers/promises";
+import { log } from "./log.mjs";
 import { nameHeatmapCells } from "./places.mjs";
 
 const INSTALL_HINT =
@@ -57,15 +58,19 @@ const callOnce = async (name, args, signal) => {
     return {
       status: "error",
       summary: result.content?.find((block) => block.type === "text")?.text ?? "No result.",
-      error: { code: "UNKNOWN", retryable: false },
+      error: { code: "INVALID_RESPONSE", retryable: false },
     };
   } catch (error) {
-    return {
-      status: "error",
-      summary: error.message,
-      error: { code: "TRANSPORT", retryable: true },
-    };
+    return { status: "error", summary: error.message, error: failure(error) };
   }
+};
+
+// The harness classifies Qloo's own failures (QLOO_AUTH, QLOO_RATE_LIMIT,
+// QLOO_TIMEOUT, QLOO_UPSTREAM and so on); these are failures before Qloo answers.
+const failure = (error) => {
+  if (error.name === "AbortError" || /abort/i.test(error.message)) return { code: "CANCELLED", retryable: false };
+  if (/timed out/i.test(error.message)) return { code: "QLOO_TIMEOUT", retryable: true };
+  return { code: "TRANSPORT", retryable: true };
 };
 
 // The harness marks these retryable but gives no wait time, so back off on our own.
@@ -93,10 +98,10 @@ export const limited = (call, { parallel = 3, delays = [1500, 4000] } = {}) => {
     try {
       for (let attempt = 0; ; attempt += 1) {
         const envelope = await call(name, args, signal);
-        if (!RETRY_CODES.has(envelope.error?.code) || attempt >= delays.length) return envelope;
-        console.warn(`Qloo ${name} failed with ${envelope.error.code}; retrying in ${delays[attempt]} ms`);
+        if (!RETRY_CODES.has(envelope.error?.code) || attempt >= delays.length) return attempt ? { ...envelope, retries: attempt } : envelope;
+        log("warn", "qloo_retry", { tool: name, code: envelope.error.code, attempt: attempt + 1, delay_ms: delays[attempt] });
         const stopped = await sleep(delays[attempt], false, { signal }).catch(() => true);
-        if (stopped) return envelope;
+        if (stopped) return { ...envelope, retries: attempt };
       }
     } finally {
       release();

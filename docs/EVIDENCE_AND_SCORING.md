@@ -1,6 +1,6 @@
 # Evidence and scoring
 
-What a brief claims, where each claim comes from, and how candidates are scored. The code is in [src/brief.mjs](../src/brief.mjs) (evidence and grounding) and [src/opportunities.mjs](../src/opportunities.mjs) (scoring).
+What a brief claims, where each claim comes from, and how candidates are scored. The code is in [src/brief.mjs](../src/brief.mjs) (evidence and grounding) and [public/js/opportunities.js](../public/js/opportunities.js) (scoring).
 
 ## Where each part of a brief comes from
 
@@ -80,3 +80,28 @@ Known weaknesses:
 - Scores say nothing about availability, cost or commercial outcome.
 
 A change to any rule above must bump `SCORING_VERSION`; each scan records its version and weights.
+
+## Re-ranking by preference (Opportunities tab)
+
+The browser loads the same scoring module ([public/js/opportunities.js](../public/js/opportunities.js)) and can re-rank a scan's stored candidates for another size preference: any size, emerging or established. Only the preference changes; the Qloo evidence is the scan's. The tab says so, shows how far each candidate moved against the scan's own ranking, and states the weights in use. A test checks that re-ranking stored candidates gives exactly what scoring from scratch would.
+
+The chart plots fit (up) against popularity rank among the scan's candidates (right). Both are ranks, so positions are not distances between tastes, and the caption says so. Candidates without a Qloo popularity are counted and left off the chart.
+
+## Audience DNA
+
+Built with no model involvement from the scan's two extra calls ([src/brief.mjs](../src/brief.mjs) `profileFrom`):
+
+| Section | Source |
+| --- | --- |
+| What Qloo associates with this audience | `qloo_entity_tags` for the seeds, grouped by tag domain (music, place, media), in Qloo's order |
+| Who over- and under-indexes | `qloo_audience_demographics` for the first seed: age and gender skews against Qloo's baseline, drawn as bars left or right of the baseline with the signed value |
+| Also liked, by category | The first result in each scanned category |
+| Gaps and limits | Failed or empty parts, the seeds the profile reads through, and that the data is aggregate |
+
+Values of the wrong shape are dropped rather than shown. Skews are relative indices, not shares of customers.
+
+## Partnership plans
+
+A plan is written by the model with `deliver_plan`, at the user's request for one partner. The server writes the request, so its rules (base the fit on this scout's Qloo results; no invented contacts, budgets, relationships, endorsements or forecasts; success measures are things to measure, not predictions) cannot be edited from the browser. `checkPlan` requires every part and sends back garbled fields; `groundPlan` checks the partner against the evidence ledger and attaches its Qloo records, or flags a partner Qloo never returned.
+
+In the Plans tab, the fit bullets are labelled as the scout's reading and sit beside the partner's Qloo records; the rest of the plan is labelled as the scout's suggestion.
