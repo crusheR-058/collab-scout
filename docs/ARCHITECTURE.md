@@ -63,7 +63,9 @@ Evidence, comparison and the audience profile are served inside a version rather
 - adds no dependency, no network hop, no credentials and no monthly cost;
 - gives transactions, foreign keys, CHECK constraints and indexes.
 
-**Hours.** To save cost, EventBridge Scheduler stops the instance at 21:00 IST and starts it at 11:00 IST (schedules `collab-scout-stop-2100-ist` and `collab-scout-start-1100-ist` in `ap-south-1`, role `collab-scout-scheduler`, which may only start and stop this instance). The Elastic IP keeps CloudFront's origin fixed, systemd starts the app on boot, and the database survives because the disk is kept. Between 21:00 and 11:00 the site returns CloudFront's 502 error, and a scout still running at 21:00 is cut off. To change the hours, edit the two schedules; to stop pausing, disable them.
+**Hours.** To save cost, EventBridge Scheduler stops the instance at 21:00 IST and starts it at 11:00 IST (schedules `collab-scout-stop-2100-ist` and `collab-scout-start-1100-ist` in `ap-south-1`, role `collab-scout-scheduler`, which may only start and stop this instance). The Elastic IP keeps CloudFront's origin fixed, systemd starts the app on boot, and the database survives because the disk is kept. While the instance is down, CloudFront answers 502 and 504 with a "closed for the night" page (`deploy/closed.html`, served from the private bucket `collab-scout-site-651709558319-aps1` through origin access control, as status 503, cached for 60 s). The app's own 503s are not replaced. The origin is tried twice with a 4 s connection timeout, so the page appears after about 8 s rather than 30 s. A scout still running at 21:00 is cut off. To change the hours, edit the two schedules and the page; to stop pausing, disable the schedules.
+
+**Backups.** Data Lifecycle Manager policy `policy-0e6c404cbaf0aadb2` snapshots the volume tagged `Project=collab-scout` daily at 21:15 IST, after the stop, so the SQLite file is not mid-write, and keeps the last 7 snapshots. To restore, create a volume from a snapshot and swap it in, or copy `data/collab-scout.db` out of it.
 
 Considered and not chosen now:
 
@@ -72,7 +74,7 @@ Considered and not chosen now:
 | Amazon RDS for PostgreSQL | About $15 or more a month, a VPC connection and a credential to manage, for one process with modest writes. Worth it with several app instances. |
 | Supabase (Postgres plus Auth) | Its value here is managed accounts. Choosing accounts is a product decision, and no Supabase project or credentials exist for this app. |
 
-The trade-off: the data lives on one instance's disk. It needs backups (EBS snapshots or copying the file), and running two app instances would need Postgres. All SQL is in `src/db.mjs`, so a move to Postgres changes one module and its migrations.
+The trade-off: the data lives on one instance's disk, backed up by nightly snapshots (see Backups), and running two app instances would need Postgres. All SQL is in `src/db.mjs`, so a move to Postgres changes one module and its migrations.
 
 Schema (migrations 1 and 2): `owners` (one per Cognito account, with its email);  `auth_sessions` (hashed session tokens with expiry); `research` (one row per scout, status from a fixed list, token and Qloo call totals); `versions` (each delivered brief or plan, numbered, never rewritten, with the scoring method version); `events` (the field log: every tool call and result, note, question and error, which is also the audit trail). Foreign keys cascade from owner to research to versions and events. Migrations are append-only and tracked in `PRAGMA user_version`.
 

@@ -118,6 +118,54 @@ export const forModel = ({ query_intent, execution, provenance, explainability, 
   ...(Array.isArray(envelope.results) && { results: envelope.results.map(compactResult) }),
 });
 
+// Every step replays the whole conversation, so Qloo results from before the
+// latest turn, which the model has already read, lose the middle of trend
+// series and the alternatives of names that resolved. Unresolved names keep
+// theirs, since the user may still be choosing, and descriptions stay, since
+// without them the model looked partners up again. The evidence ledger keeps
+// every result in full for grounding.
+const FULL_TURNS = 1;
+
+const shrinkEnvelope = ({ resolution, ...envelope }) => ({
+  ...envelope,
+  ...(resolution && {
+    resolution: {
+      ...resolution,
+      outcomes: resolution.outcomes?.map((outcome) =>
+        outcome.status === "resolved"
+          ? {
+              input: outcome.input,
+              status: outcome.status,
+              ...(outcome.selected && { selected: { id: outcome.selected.id, name: outcome.selected.name, type: outcome.selected.type } }),
+            }
+          : outcome,
+      ),
+    },
+  }),
+  ...(Array.isArray(envelope.series) && {
+    series: envelope.series.map(({ points, ...series }) => {
+      if (!Array.isArray(points) || points.length <= 2) return { ...series, points };
+      const sorted = points.toSorted((a, b) => String(a?.date).localeCompare(String(b?.date)));
+      return { ...series, points: [sorted[0], sorted.at(-1)], point_count: points.length };
+    }),
+  }),
+});
+
+export const shrinkOldResults = (messages) => {
+  const turns = messages.filter((message) => message.role === "user");
+  for (const { content } of turns.slice(0, -FULL_TURNS)) {
+    for (const block of content) {
+      const part = block.toolResult?.content?.[0];
+      if (!part?.text?.startsWith("{")) continue;
+      try {
+        part.text = JSON.stringify(shrinkEnvelope(JSON.parse(part.text)));
+      } catch {
+        // Not JSON after all: leave it as sent.
+      }
+    }
+  }
+};
+
 // `known` is a result already in hand: an earlier identical call, or a refusal.
 const runQloo = async ({ toolUseId, name, input }, known, session, qloo) => {
   if (!known) session.usage.qlooCalls += 1;
@@ -251,6 +299,7 @@ export async function* run(
       yield { type: "error", code: "RUN_TIMEOUT", message: "The scout ran out of time without a brief. Try a narrower brief." };
       return;
     }
+    shrinkOldResults(session.messages);
     let response;
     const timeout = AbortSignal.timeout(MODEL_TIMEOUT_MS);
     try {

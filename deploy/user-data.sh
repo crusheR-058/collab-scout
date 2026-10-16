@@ -23,9 +23,11 @@ cd "$APP_DIR"
 npm ci --omit=dev
 chown -R app:app "$APP_DIR"
 
+# Tracing off before the key is read, or `set -x` prints it to the boot log.
+set +x
 QLOO_KEY=$(aws ssm get-parameter --region "$REGION" --name /collab-scout/qloo-api-key \
   --with-decryption --query Parameter.Value --output text)
-set +x
+install -m 600 /dev/null /etc/collab-scout.env
 cat >/etc/collab-scout.env <<EOF
 QLOO_API_KEY=${QLOO_KEY}
 QLOO_BASE_URL=https://hackathon.api.qloo.com
@@ -41,7 +43,6 @@ COGNITO_USER_POOL_ID=ap-south-1_FQQMfc2Yh
 COGNITO_GOOGLE=1
 EOF
 set -x
-chmod 600 /etc/collab-scout.env
 
 cat >/etc/systemd/system/collab-scout.service <<EOF
 [Unit]

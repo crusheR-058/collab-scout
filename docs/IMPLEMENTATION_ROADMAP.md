@@ -99,9 +99,7 @@ A scroll-driven landing page (3D hero, pinned walkthrough of the four steps, a c
 
 - **No baseline comparison without Qloo** in the bake-off. A fair measure of a general-knowledge answer needs a human rating rubric; the bake-off measures grounding, not quality.
 - **Multi-entity "collision" concepts and broader scenario comparison.** The size-preference re-ranking covers one scenario dimension with the same evidence; other scenarios would need new Qloo runs and a comparison view.
-- **Database backups.** The SQLite file is on the instance's disk; EBS snapshots or a file copy job have not been set up.
-- **Live check of the deployed instance.** The new code has not been deployed; production still runs the version before this milestone.
-- **Long scouts are expensive.** The coffee brief used about 300,000 input tokens over its steps, because each step replays the conversation. Summarising older tool results would cut this; it is not done.
+- **Long scouts are still expensive.** Measured on a live coffee scout (2026-10-16, 11 steps, 144,543 input tokens): about 47% is the system prompt and tool definitions (about 6,200 tokens) re-sent on every step, and GLM 5 on Bedrock refuses prompt caching. Older Qloo results are now replayed without resolved alternatives or full trend series, which saves about 6% on that run. Dropping their descriptions as well saved 13% on paper, but in one live run with that the model described six partners again (13 steps, 25 Qloo calls), possibly because of it, so descriptions stay. Fewer steps, or a model with prompt caching, are the larger levers.
 - **The model still decides which names to resolve**, so a seed can be a single café rather than the brand. The scan shows seed categories so this is visible.
 
 ## Known limitations

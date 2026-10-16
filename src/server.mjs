@@ -276,9 +276,18 @@ const resume = async (req, res, reply, { needsBrief = false } = {}) => {
       return;
     }
   }
+  const before = session.pending.afterBrief && { pending: session.pending, length: session.messages.length };
   answer(session, reply);
   persist(() => db.setStatus(req.params.id, "running"), { research: req.params.id });
   await stream(res, req.params.id, session);
+  // A revision or plan that was stopped, failed or delivered nothing must not
+  // cost the brief: undo the request and keep the scout delivered and revisable.
+  if (before && !session.pending) {
+    session.messages.length = before.length;
+    Object.assign(session, { pending: before.pending, done: false, cancelled: false, controller: new AbortController() });
+    sessions.set(req.params.id, session);
+    persist(() => db.setStatus(req.params.id, "delivered"), { research: req.params.id });
+  }
 };
 
 app.post("/api/scout/:id/answer", (req, res) => resume(req, res, text(req.body?.answer).slice(0, MAX_BRIEF_CHARS)));

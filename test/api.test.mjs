@@ -287,6 +287,12 @@ test("the owner answers, gets a brief and a plan, each saved as a version", asyn
   assert.equal(saved.live, true);
   const listed = (await (await call("/api/research", { cookie: alice })).json()).research;
   assert.equal(listed[0].title, "Test Roastery × One");
+
+  // A revision that delivers nothing leaves the brief delivered and still revisable.
+  await events(await call(`/api/scout/${researchId}/answer`, { cookie: alice, method: "POST", body: { answer: "Shorter" } }));
+  const after = await (await call(`/api/research/${researchId}`, { cookie: alice })).json();
+  assert.equal(after.research.status, "delivered");
+  assert.equal(after.live, true);
 });
 
 test("saved research and sign-ins survive a restart; the open session does not", async () => {

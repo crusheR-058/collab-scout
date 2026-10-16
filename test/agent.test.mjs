@@ -1,7 +1,7 @@
 // The agent loop with a scripted model and a fake Qloo: no AWS or Qloo needed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { answer, cancel, forModel, newSession, planRequest, run } from "../src/agent.mjs";
+import { answer, cancel, forModel, newSession, planRequest, run, shrinkOldResults } from "../src/agent.mjs";
 import { A, B, C, brief, entity, ok, plan, textTurn, toolTurn } from "./fixtures.mjs";
 
 const quiet = (t) => t.mock.method(console, "error", () => {});
@@ -353,6 +353,31 @@ test("the model's view of a Qloo result keeps what it acts on and drops the rest
   assert.deepEqual(view.results[0].properties, { address: "1 Street", description: "d".repeat(300) });
   assert.equal(view.results[0].affinity, 0.9);
   assert.deepEqual(view.series, [{ entity: { name: "A" }, points: [] }]);
+});
+
+test("results from before the latest turn are replayed without resolved alternatives or full series", () => {
+  const envelope = {
+    status: "ok",
+    resolution: {
+      outcomes: [
+        { input: "Seed", status: "resolved", selected: { id: "1", name: "Seed", type: "t", description: "long" }, alternatives: [{ id: "2" }] },
+        { input: "Maybe", status: "ambiguous", alternatives: [{ id: "3", name: "Maybe A" }] },
+      ],
+    },
+    results: [{ ...A, properties: { description: "long" } }],
+    series: [{ entity: { name: "A" }, points: ["2026-03-01", "2026-01-01", "2026-02-01"].map((date) => ({ date })) }],
+  };
+  const turn = (id) => ({ role: "user", content: [{ toolResult: { toolUseId: id, content: [{ text: JSON.stringify(envelope) }] } }] });
+  const messages = [{ role: "user", content: [{ text: "brief" }] }, turn("old"), { role: "assistant", content: [{ text: "ok" }] }, turn("new")];
+  shrinkOldResults(messages);
+
+  const old = JSON.parse(messages[1].content[0].toolResult.content[0].text);
+  assert.deepEqual(old.resolution.outcomes[0], { input: "Seed", status: "resolved", selected: { id: "1", name: "Seed", type: "t" } });
+  assert.deepEqual(old.resolution.outcomes[1], envelope.resolution.outcomes[1]);
+  assert.deepEqual(old.results[0], envelope.results[0]);
+  assert.deepEqual(old.series[0], { entity: { name: "A" }, points: [{ date: "2026-01-01" }, { date: "2026-03-01" }], point_count: 3 });
+  assert.deepEqual(JSON.parse(messages[3].content[0].toolResult.content[0].text), envelope);
+  assert.deepEqual(messages[0].content, [{ text: "brief" }]);
 });
 
 test("token and Qloo call usage is counted per session, reused calls excluded", async () => {
