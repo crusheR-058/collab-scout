@@ -1,6 +1,7 @@
 // One shared connection to the local `qloo mcp` stdio server.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { setTimeout as sleep } from "node:timers/promises";
 import { nameHeatmapCells } from "./places.mjs";
 
 const INSTALL_HINT =
@@ -44,9 +45,11 @@ export const qlooReady = async () => {
 };
 
 // Always resolves to a Qloo result envelope, so the agent can read failures too.
-export const callQloo = async (name, args) => {
+// `signal` stops an in-flight call when the visitor stops the scout; the MCP
+// client's own 60 s timeout bounds a call that hangs.
+const callOnce = async (name, args, signal) => {
   try {
-    const result = await (await qloo()).callTool({ name, arguments: args });
+    const result = await (await qloo()).callTool({ name, arguments: args }, undefined, { signal });
     const envelope = result.structuredContent;
     if (envelope?.status) {
       return name === "qloo_where_popular" ? nameHeatmapCells(envelope) : envelope;
@@ -64,6 +67,44 @@ export const callQloo = async (name, args) => {
     };
   }
 };
+
+// The harness marks these retryable but gives no wait time, so back off on our own.
+const RETRY_CODES = new Set(["QLOO_RATE_LIMIT", "QLOO_UPSTREAM"]);
+
+// One Qloo key serves every scout, so cap the calls in flight across the
+// server and retry rate-limited calls a bounded number of times. A call keeps
+// its slot while it waits, which also eases pressure on the rate limit.
+export const limited = (call, { parallel = 3, delays = [1500, 4000] } = {}) => {
+  let active = 0;
+  const waiting = [];
+  const acquire = async () => {
+    if (active < parallel) active += 1;
+    else await new Promise((resolve) => waiting.push(resolve));
+  };
+  const release = () => {
+    // Hand the slot straight to the next caller so `active` never overshoots.
+    const next = waiting.shift();
+    if (next) next();
+    else active -= 1;
+  };
+
+  return async (name, args, signal) => {
+    await acquire();
+    try {
+      for (let attempt = 0; ; attempt += 1) {
+        const envelope = await call(name, args, signal);
+        if (!RETRY_CODES.has(envelope.error?.code) || attempt >= delays.length) return envelope;
+        console.warn(`Qloo ${name} failed with ${envelope.error.code}; retrying in ${delays[attempt]} ms`);
+        const stopped = await sleep(delays[attempt], false, { signal }).catch(() => true);
+        if (stopped) return envelope;
+      }
+    } finally {
+      release();
+    }
+  };
+};
+
+export const callQloo = limited(callOnce);
 
 export const closeQloo = async () => {
   const pending = connection;
