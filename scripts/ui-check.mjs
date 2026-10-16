@@ -67,6 +67,23 @@ if (gotBrief) {
       `${await count(".tag.no-match")} not found, ${await count("img.partner-photo")} photos, ` +
       `${await count("#log-list .call")} log rows`,
   );
+  console.log(
+    `${await count(".meter-row")} score bars, ${await count("[data-trend]")} trends, ` +
+      `${await count(".place-check")} locations (${await count(".place-check.unchecked")} not from a heatmap); ` +
+      `basis: ${await page.textContent(".basis")}`,
+  );
+  if (await count(".opportunities")) {
+    console.log(
+      `${await count(".opportunities tbody tr")} opportunity rows, ${await count(".opportunities tr[data-chosen]")} of them partners; ` +
+        `${await page.locator(".brief-body section:has(.opportunities) .basis").first().textContent()}`,
+    );
+    await page.locator(".brief-body section:has(.opportunities)").screenshot({ path: `${out}/4c-opportunities.png` });
+  } else console.log("no cross-category scan in this brief");
+  if (await count(".records summary")) {
+    await page.click(".records summary");
+    console.log(`first partner's Qloo records:\n  ${(await page.locator(".records[open] li").allTextContents()).join("\n  ")}`);
+    await page.locator(".records[open]").screenshot({ path: `${out}/4b-records.png` });
+  }
 
   // Ask for a change and wait for the revised brief.
   const before = await page.textContent(".pair-them");

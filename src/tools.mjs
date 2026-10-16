@@ -1,8 +1,10 @@
-// Tools the model sees: Qloo's MCP tools plus two that the app handles itself.
+// Tools the model sees: Qloo's MCP tools plus three that the app handles itself.
+import { CATEGORIES, MAX_CATEGORIES, PREFERENCES } from "./opportunities.mjs";
 import { listQlooTools } from "./qloo.mjs";
 
 export const ASK_USER = "ask_user";
 export const DELIVER_BRIEF = "deliver_brief";
+export const SCAN_OPPORTUNITIES = "scan_opportunities";
 
 const askUser = {
   name: ASK_USER,
@@ -20,6 +22,38 @@ const askUser = {
         items: { type: "string" },
         description: "Candidate answers to offer, such as the entity matches Qloo returned.",
       },
+    },
+  },
+};
+
+const scanOpportunities = {
+  name: SCAN_OPPORTUNITIES,
+  description:
+    "Scan several Qloo categories at once for what the seed audience likes, and get one ranked table of " +
+    "candidates across categories. The app runs one qloo_recommend per category and scores each candidate " +
+    "with a fixed method: fit (its place in Qloo's order within its category), size (popularity against the " +
+    "other candidates, by preference) and novelty (a category other than the seeds'). The scores are " +
+    "heuristic and only rank within this scan; compare a shortlist with qloo_rank.",
+  inputSchema: {
+    type: "object",
+    required: ["seeds", "categories"],
+    properties: {
+      seeds: {
+        type: "array",
+        items: { type: "string" },
+        description: "1 to 5 Qloo entity IDs for entities already resolved in this scout, such as with qloo_describe.",
+      },
+      categories: {
+        type: "array",
+        items: { type: "string", enum: CATEGORIES },
+        description: `1 to ${MAX_CATEGORIES} Qloo entity types to scan: the partner type the user wants, plus others worth exploring.`,
+      },
+      prefer: {
+        type: "string",
+        enum: PREFERENCES,
+        description: "emerging favours less popular candidates, established more popular ones, either ignores popularity. Default either.",
+      },
+      signal_location: { type: "string", description: "Optional place that shifts which audience Qloo weighs." },
     },
   },
 };
@@ -52,14 +86,9 @@ const deliverBrief = {
             evidence: {
               type: "array",
               items: { type: "string" },
-              description: "Specific Qloo findings behind the rationale.",
-            },
-            affinity: { type: "number", description: "Qloo affinity score for this partner, 0 to 1." },
-            popularity: { type: "number", description: "Qloo popularity score, 0 to 1." },
-            trend: {
-              type: "string",
-              enum: ["rising", "steady", "falling", "unknown"],
-              description: "Only from qloo_trends data. Use unknown when the data shows no movement.",
+              description:
+                "Specific Qloo findings behind the rationale. The app attaches Qloo's own scores, " +
+                "trend and records to each partner by name, so use the exact name Qloo returned.",
             },
           },
         },
@@ -92,4 +121,4 @@ const toolSpec = ({ name, description, inputSchema }) => ({
 });
 
 export const loadTools = async () =>
-  [...(await listQlooTools()), askUser, deliverBrief].map(toolSpec);
+  [...(await listQlooTools()), askUser, scanOpportunities, deliverBrief].map(toolSpec);

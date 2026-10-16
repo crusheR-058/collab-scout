@@ -117,6 +117,12 @@ const consume = async (url, body, onError = failed) => {
     for await (const event of serverEvents(url, body, controller.signal)) handle(event);
   } catch (error) {
     onError(error);
+    return;
+  }
+  // The stream closed without a question, brief or error: the server cannot
+  // resume a broken stream, so say so instead of spinning forever.
+  if (!$("#panel-working").hidden) {
+    showEnded("The connection to the scout closed early.", "Start a new scout to try again.");
   }
 };
 
