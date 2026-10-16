@@ -103,7 +103,7 @@ A scroll-driven landing page (3D hero, pinned walkthrough of the four steps, a c
 - **Confirm the starting names**: before the first scan the user confirms whose audience it reads.
 - **Compare**: the brief's scan run again for another market and/or with one more name (an ambiguous name takes Qloo's most popular candidate and says so), side by side with overlaps marked. Qloo only; not saved.
 - **Export**: Markdown download beside copy and print to PDF.
-- **Verified**: 100 offline tests; the offline UI check covers share, check, compare and the first message; a live run confirmed the seed question, a plan's message, a trends check and a comparison against real Qloo (a 90-day trends range returned no points, so a year is asked for).
+- **Verified**: 101 offline tests; the offline UI check covers share, check, compare and the first message; a live run confirmed the seed question, a plan's message, a trends check and a comparison against real Qloo (a 90-day trends range returned no points, so a year is asked for).
 
 ## Not done, and why
 
