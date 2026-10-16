@@ -1,0 +1,44 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-10-15T15:00:06.291Z",
+        "reason": "Claude: static scan does not load landing.css (it reads h1 as 17px); rendered page has an 84px h1 over 17px body"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-10-15T15:00:06.516Z",
+        "reason": "Claude: static scan without CSS; rendered .reads children are inset by .wrap and .rail padding, and the rendered detector does not flag it"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-10-15T15:00:06.760Z",
+        "reason": "Claude: intentional; the story illustration shows a list of choice rows inside its panel"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-10-15T15:00:06.979Z",
+        "reason": "Claude: static scan samples radial-gradient highlights without layout; the rendered-page detector is the contrast check for this file and its one remaining hit is a sphere label that renders on the violet background, outside the sphere"
+      }
+    ]
+  }
+}
