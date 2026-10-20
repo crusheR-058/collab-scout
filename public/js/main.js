@@ -2,8 +2,8 @@
 import { renderBrief } from "./brief.js";
 import { $, el, list, plain, quote } from "./dom.js";
 import { focusForm, prefill, setupForm } from "./form.js";
-import { saveScout, showHistory } from "./history.js";
-import { addCall, addNote, finishCall, resetLog, showStoredLog, toggleLog } from "./log.js";
+import { forgetBrowser, loadScout, request, showHistory } from "./history.js";
+import { addCall, addNote, finishCall, resetLog, toggleLog } from "./log.js";
 import { advance, resetProgress, showMeta, stopClock } from "./progress.js";
 import { BRIEF_STAGE, STAGES, stageOf } from "./stages.js";
 import { resetState, state } from "./state.js";
@@ -56,14 +56,34 @@ const showEnded = (title, text) => {
   showPanel("ended");
 };
 
-const showBrief = () => {
+// Calls about the saved scout on screen, which work after its live session ends.
+const savedCall = (path, body) =>
+  request(`api/research/${encodeURIComponent(state.sessionId)}/${path}`, {
+    method: body === null ? "DELETE" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+// `view` picks the tab and the plan to open.
+const showBrief = (view = {}) => {
   renderBrief(state.brief, {
     onRefine: state.live ? refine : undefined,
+    onPlan: state.live ? requestPlan : undefined,
+    onCheck: () => savedCall("check", {}),
+    onCompare: (changes) => savedCall("compare", changes),
+    share: state.share,
+    onShare: async () => (state.share = (await savedCall("share", {})).token),
+    onUnshare: async () => {
+      await savedCall("share", null);
+      state.share = null;
+    },
     onRestart: restart,
     onStartAgain: () => {
       restart();
       prefill(state.briefText);
     },
+    plans: state.plans,
+    ...view,
   });
   showPanel("brief");
   $("#panel-brief").scrollIntoView({ block: "start", behavior: "smooth" });
@@ -84,15 +104,13 @@ const handle = (event) => {
   if (event.type === "brief") {
     advance(BRIEF_STAGE);
     state.brief = event.brief;
-    saveScout({
-      id: state.sessionId,
-      at: Date.now(),
-      text: state.briefText,
-      brief: state.brief,
-      entries: state.entries,
-      callCount: state.callCount,
-    });
     showBrief();
+  }
+  // A revised plan replaces the earlier plan for the same partner.
+  if (event.type === "plan") {
+    advance(BRIEF_STAGE);
+    state.plans = [event.plan, ...state.plans.filter((plan) => plan.partner !== event.plan.partner)];
+    showBrief({ tab: "plans", openPlan: event.plan.partner });
   }
   if (event.type === "error") showEnded("The scout stopped early.", event.message);
   if (event.type === "done" && $("#panel-brief").hidden && $("#panel-ended").hidden) {
@@ -158,28 +176,54 @@ function refine(change) {
   });
 }
 
+// A plan for one partner, or a change to an existing plan. If it cannot
+// start, go back to the plans with the reason.
+function requestPlan(partner, note) {
+  addNote(note ? `Change requested to the plan for ${partner}: ${note}` : `Plan requested: ${partner}`);
+  showWorking(`Planning a partnership with ${partner}.`);
+  return consume(`api/scout/${state.sessionId}/plan`, { partner, note }, (error) => {
+    if (error.name === "AbortError") return failed(error);
+    showBrief({ tab: "plans", openPlan: partner });
+    const hint = $("#plan-hint");
+    if (hint) hint.textContent = error.message;
+    else showEnded("The plan could not start.", error.message);
+  });
+}
+
 function restart() {
   showView("idle");
   focusForm();
 }
 
-// Reopen a scout saved in this browser.
-function openScout(scout) {
-  Object.assign(state, {
-    sessionId: scout.id,
-    live: false,
-    briefText: scout.text,
-    brief: scout.brief,
-    entries: scout.entries,
-    callCount: scout.callCount,
-    notes: [],
-  });
-  state.calls.clear();
-  $("#log-brief-text").textContent = scout.text;
+// Redraw the field log from the events the server stored, through the same
+// functions the live scout uses.
+const replay = (event) => {
+  if (event.type === "tool_call") addCall(event);
+  if (event.type === "tool_result") finishCall(event);
+  if (event.type === "text") addNote(event.text);
+  if (event.type === "question") addNote(`The scout asked: ${event.question}`);
+  if (event.type === "error") addNote(`Stopped: ${event.message}`);
+};
+
+// Reopen a saved scout. It can still be revised while the server holds it.
+async function openScout(id) {
+  let saved;
+  try {
+    saved = await loadScout(id);
+  } catch (error) {
+    showView("work");
+    showEnded("This scout could not be opened.", error.message);
+    return;
+  }
+  resetState(saved.research.brief_text);
+  Object.assign(state, { sessionId: id, live: saved.live, brief: saved.brief, plans: saved.plans, share: saved.share });
+  $("#log-brief-text").textContent = saved.research.brief_text;
   foldLogOnPhone();
   showView("work");
-  showStoredLog(scout.entries);
-  showBrief();
+  resetLog();
+  for (const { payload } of saved.events) replay(payload);
+  if (saved.brief) showBrief();
+  else showEnded("This scout has no brief.", saved.research.error ?? "It ended before delivering one.");
 }
 
 /* ---------- Wiring ---------- */
@@ -208,6 +252,18 @@ $("#stop").addEventListener("click", () => controller?.abort());
 $("#log-toggle").addEventListener("click", toggleLog);
 $("#restart").addEventListener("click", restart);
 $("[data-restart]").addEventListener("click", restart);
+$("#forget").addEventListener("click", async () => {
+  if (!confirm("Delete every scout and plan saved to your account? This also signs you out. It cannot be undone.")) return;
+  await forgetBrowser().catch(() => {});
+  location.assign("/");
+});
+
+fetch("api/me")
+  .then((response) => (response.ok ? response.json() : undefined))
+  .then((me) => {
+    if (me?.email) $("#account-email").textContent = me.email;
+  })
+  .catch(() => {});
 
 showHistory(openScout);
 

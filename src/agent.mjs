@@ -1,11 +1,12 @@
 // The scouting loop: a model on Bedrock decides which Qloo tools to call; we run
 // them, pause when it asks the user something, and stop when it delivers a brief.
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
-import { checkBrief, entityLabels, groundBrief, recordEntities, recordPlaces, strings } from "./brief.mjs";
-import { CATEGORIES, MAX_CATEGORIES, PREFERENCES, scoreScan } from "./opportunities.mjs";
+import { checkBrief, checkPlan, entityLabels, groundBrief, groundPlan, profileFrom, recordEntities, recordPlaces, strings } from "./brief.mjs";
+import { CATEGORIES, MAX_CATEGORIES, PREFERENCES, scoreScan } from "../public/js/opportunities.js";
+import { log } from "./log.mjs";
 import { SYSTEM_PROMPT } from "./prompt.mjs";
 import { callQloo } from "./qloo.mjs";
-import { ASK_USER, DELIVER_BRIEF, SCAN_OPPORTUNITIES, loadTools } from "./tools.mjs";
+import { ASK_USER, DELIVER_BRIEF, DELIVER_PLAN, SCAN_OPPORTUNITIES, loadTools } from "./tools.mjs";
 
 export const MODEL = process.env.BEDROCK_MODEL_ID ?? "zai.glm-5";
 const MAX_STEPS = 24;
@@ -18,6 +19,9 @@ const MAX_SEEDS = 5;
 // Candidates the model reads back from a scan; the brief shows them all.
 const SCAN_ROWS_FOR_MODEL = 15;
 const MODEL_TIMEOUT_MS = 120 * 1000;
+// Steps and calls are bounded, but a run also gets a wall-clock limit.
+const RUN_TIMEOUT_MS = 8 * 60 * 1000;
+export const SEEDS_CONFIRMED = "Yes, scan with these";
 const WRAP_UP =
   "You are almost out of steps. Call deliver_brief now with what the results so far support, " +
   "and list anything you could not check under limitations.";
@@ -38,6 +42,8 @@ export const newSession = (brief) => ({
   places: new Map(),
   // Successful Qloo results by tool and input, so a repeated call costs nothing.
   cache: new Map(),
+  // Model tokens as Bedrock reports them, and Qloo requests actually sent.
+  usage: { inputTokens: 0, outputTokens: 0, qlooCalls: 0 },
 });
 
 // The visitor pressed Stop or left: abort the model and Qloo calls in flight.
@@ -52,28 +58,124 @@ const toolResult = (toolUseId, text, isError = false) => ({
 
 const refusal = (code, summary) => ({ status: "error", summary, error: { code, retryable: false } });
 
-// Provider error text can carry account details, so the browser gets the error name only.
+// Provider error text can carry account details, so the browser gets a code
+// and a plain message only; the server log keeps the provider's error name.
 const modelFailure = (error) => {
-  if (error.name === "TimeoutError") return "The model took too long to answer. Try again.";
-  if (error.name === "ThrottlingException") return "The model is busy right now. Try again in a minute.";
-  if (error.name === "AccessDeniedException") return "This server is not allowed to use the model. Check its Bedrock access.";
-  return `The model request failed (${error.name ?? "unknown error"}).`;
+  if (error.name === "TimeoutError") return { code: "MODEL_TIMEOUT", message: "The model took too long to answer. Try again." };
+  if (error.name === "ThrottlingException") return { code: "MODEL_RATE_LIMIT", message: "The model is busy right now. Try again in a minute." };
+  if (error.name === "AccessDeniedException") {
+    return { code: "MODEL_AUTH", message: "This server is not allowed to use the model. Check its Bedrock access." };
+  }
+  if (error.name === "ValidationException") return { code: "MODEL_REJECTED", message: "The model rejected the request." };
+  return { code: "MODEL_ERROR", message: `The model request failed (${error.name ?? "unknown error"}).` };
 };
+
+// What a request for a partnership plan says to the model. Written here, not
+// by the browser, so the rules for a plan cannot be edited from outside.
+export const planRequest = (partner, note) =>
+  [
+    `Build a partnership plan for ${partner} and deliver it with deliver_plan.`,
+    "Base the fit on what Qloo returned in this scout about this partner and the user's audience; make further Qloo calls only if the plan needs them.",
+    "Do not invent contacts, budgets, existing relationships, endorsements, sales or revenue forecasts.",
+    "Success measures are things to measure in a small test, not predictions.",
+    note && `The user adds: ${note}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
 // Resume a session that stopped on a question or a delivered brief. A question
 // asked through ask_user is answered as its tool result; a plain-text question,
 // or a change the user wants to a brief, gets a text reply.
 export const answer = (session, text) => {
-  const { results, askId } = session.pending;
-  const reply = askId ? toolResult(askId, text) : { text };
+  const { results, askId, confirmSeeds } = session.pending;
+  // Anything but a no counts as confirmed; after a no, the next scan asks again.
+  if (confirmSeeds && !/^\s*no\b/i.test(text)) session.seedsConfirmed = true;
+  const said = confirmSeeds
+    ? `Not run yet: the user was asked to confirm these seeds and answered ${JSON.stringify(text)}. ` +
+      "If they confirmed, call scan_opportunities again with the same input. If not, resolve who they mean first."
+    : text;
+  const reply = askId ? toolResult(askId, said) : { text };
   session.messages.push({ role: "user", content: [...results, reply] });
   session.pending = undefined;
 };
 
 const callKey = ({ name, input }) => `${name} ${JSON.stringify(input)}`;
 
+// What the model reads of a Qloo result: the data, plus what it needs to act on
+// a failure or an ambiguous match. Request logs, timings, images and long
+// descriptions stay with the app; on live samples this is 58% smaller, and the
+// whole conversation is replayed every step.
+const compactResult = ({ explainability, properties, ...item }) => {
+  if (!properties) return item;
+  const { image, description, ...rest } = properties;
+  return { ...item, properties: { ...rest, ...(description && !rest.short_description && { description: description.slice(0, 300) }) } };
+};
+
+export const forModel = ({ query_intent, execution, provenance, explainability, schema_version, ...envelope }) => ({
+  ...envelope,
+  ...(envelope.resolution && {
+    resolution: {
+      issues: envelope.resolution.issues,
+      outcomes: envelope.resolution.outcomes?.map(({ provenance: _, alternatives, ...outcome }) => ({
+        ...outcome,
+        alternatives: alternatives?.map(({ id, name, type }) => ({ id, name, type })),
+      })),
+    },
+  }),
+  ...(Array.isArray(envelope.results) && { results: envelope.results.map(compactResult) }),
+});
+
+// Every step replays the whole conversation, so Qloo results from before the
+// latest turn, which the model has already read, lose the middle of trend
+// series and the alternatives of names that resolved. Unresolved names keep
+// theirs, since the user may still be choosing, and descriptions stay, since
+// without them the model looked partners up again. The evidence ledger keeps
+// every result in full for grounding.
+const FULL_TURNS = 1;
+
+const shrinkEnvelope = ({ resolution, ...envelope }) => ({
+  ...envelope,
+  ...(resolution && {
+    resolution: {
+      ...resolution,
+      outcomes: resolution.outcomes?.map((outcome) =>
+        outcome.status === "resolved"
+          ? {
+              input: outcome.input,
+              status: outcome.status,
+              ...(outcome.selected && { selected: { id: outcome.selected.id, name: outcome.selected.name, type: outcome.selected.type } }),
+            }
+          : outcome,
+      ),
+    },
+  }),
+  ...(Array.isArray(envelope.series) && {
+    series: envelope.series.map(({ points, ...series }) => {
+      if (!Array.isArray(points) || points.length <= 2) return { ...series, points };
+      const sorted = points.toSorted((a, b) => String(a?.date).localeCompare(String(b?.date)));
+      return { ...series, points: [sorted[0], sorted.at(-1)], point_count: points.length };
+    }),
+  }),
+});
+
+export const shrinkOldResults = (messages) => {
+  const turns = messages.filter((message) => message.role === "user");
+  for (const { content } of turns.slice(0, -FULL_TURNS)) {
+    for (const block of content) {
+      const part = block.toolResult?.content?.[0];
+      if (!part?.text?.startsWith("{")) continue;
+      try {
+        part.text = JSON.stringify(shrinkEnvelope(JSON.parse(part.text)));
+      } catch {
+        // Not JSON after all: leave it as sent.
+      }
+    }
+  }
+};
+
 // `known` is a result already in hand: an earlier identical call, or a refusal.
 const runQloo = async ({ toolUseId, name, input }, known, session, qloo) => {
+  if (!known) session.usage.qlooCalls += 1;
   const envelope = known ?? (await qloo(name, input, session.controller.signal));
   // A reused result was recorded when it first arrived.
   if (!known) {
@@ -84,7 +186,7 @@ const runQloo = async ({ toolUseId, name, input }, known, session, qloo) => {
   }
   return {
     envelope,
-    block: toolResult(toolUseId, JSON.stringify(envelope), envelope.status === "error"),
+    block: toolResult(toolUseId, JSON.stringify(forModel(envelope)), envelope.status === "error"),
     event: {
       type: "tool_result",
       id: toolUseId,
@@ -93,13 +195,15 @@ const runQloo = async ({ toolUseId, name, input }, known, session, qloo) => {
       summary: envelope.summary,
       result_count: envelope.result_count,
       error: envelope.error?.code,
+      retries: envelope.retries,
       requests: envelope.provenance?.requests,
     },
   };
 };
 
-// A scan becomes one qloo_recommend job per category. Seeds must be entities
-// Qloo already returned in this scout, so a scan never starts from a guess.
+// A scan becomes one qloo_recommend job per category, plus the seeds' tags and
+// the first seed's demographics for the audience profile. Seeds must be
+// entities Qloo already returned in this scout, so a scan never starts from a guess.
 const planScan = ({ toolUseId, input }, session) => {
   const ids = strings(input.seeds).map((id) => id.trim().toUpperCase());
   const seeds = ids.map((id) => [...session.entities.values()].find((entity) => String(entity.id).toUpperCase() === id));
@@ -114,16 +218,130 @@ const planScan = ({ toolUseId, input }, session) => {
   }
   if (problems.length) return { problem: `Scan not run: ${problems.join("; ")}.` };
 
-  const location = typeof input.signal_location === "string" ? input.signal_location.trim() : "";
+  const text = (value) => (typeof value === "string" ? value.trim().slice(0, 100) : "");
+  const location = text(input.signal_location);
+  const city = text(input.venue_city);
   return {
     seeds,
+    location: location || undefined,
+    city: city || undefined,
     prefer: PREFERENCES.includes(input.prefer) ? input.prefer : "either",
-    jobs: categories.map((category) => ({
-      toolUseId: `${toolUseId}-${category}`,
-      name: "qloo_recommend",
-      input: { target_type: category, signals: seeds.map((seed) => seed.id), ...(location && { signal_location: location }) },
-      category,
-    })),
+    jobs: [
+      ...categories.map((category) => ({
+        toolUseId: `${toolUseId}-${category}`,
+        name: "qloo_recommend",
+        input: {
+          target_type: category,
+          signals: seeds.map((seed) => seed.id),
+          // signal_location weighs the audience but does not restrict results, so
+          // venues need a city filter to be in the market. A country-wide venue
+          // filter timed out in testing, hence a city only.
+          ...(location && { signal_location: location }),
+          ...(city && category === "place" && { filter_location: city }),
+        },
+        category,
+      })),
+      { toolUseId: `${toolUseId}-tags`, name: "qloo_entity_tags", input: { entities: seeds.map((seed) => seed.id), limit: 10 }, part: "tags" },
+      { toolUseId: `${toolUseId}-audience`, name: "qloo_audience_demographics", input: { entity: seeds[0].id }, part: "demographics" },
+    ],
+  };
+};
+
+// A planned scan's scored table and audience profile, from its jobs' results.
+const scoredScan = (plan, envelopeOf) => ({
+  ...scoreScan({
+    calls: plan.jobs.filter((job) => job.category).map((job) => ({ category: job.category, envelope: envelopeOf(job) })),
+    seeds: plan.seeds,
+    prefer: plan.prefer,
+  }),
+  profile: profileFrom(envelopeOf(plan.jobs.find((job) => job.part === "tags")), envelopeOf(plan.jobs.find((job) => job.part === "demographics"))),
+  location: plan.location,
+  city: plan.city,
+  at: new Date().toISOString(),
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const isoDate = (time) => new Date(time).toISOString().slice(0, 10);
+const typeOf = (category) => String(category ?? "").replace(/^urn:entity:/, "");
+
+// A delivered scan run again with Qloo only, no model: for another market,
+// and/or with one more seed. `add` is a name; Qloo's first match is taken and
+// returned, so the user can see who it read.
+export const rescan = async (scan, { market, add }, qloo = callQloo) => {
+  let seeds = scan.seeds;
+  let added;
+  if (add) {
+    const found = await qloo("qloo_describe", { entity: add });
+    if (found.status === "error") return { problem: "Qloo did not answer. Try again in a minute." };
+    const item = Array.isArray(found.results) ? found.results.find((result) => result?.entity_id && typeof result.name === "string") : undefined;
+    // An ambiguous name comes back as candidates instead: take the most popular,
+    // which the page names, so the user sees who was read.
+    const candidates = (found.resolution?.issues ?? []).flatMap((issue) => issue?.candidates ?? []).filter((candidate) => candidate?.id && typeof candidate.name === "string");
+    const likeliest = candidates.toSorted((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0];
+    if (item) added = { id: item.entity_id, name: item.name, category: item.subtype ?? found.interpretation?.entity?.type };
+    else if (likeliest) added = { id: likeliest.id, name: likeliest.name, category: likeliest.type, of: candidates.length };
+    else return { problem: `Qloo found no match for ${add}.` };
+    // A full list makes room by dropping the last seed, never the first, which supplies the demographics.
+    seeds = [...seeds.filter((seed) => String(seed.id).toUpperCase() !== String(added.id).toUpperCase()).slice(0, MAX_SEEDS - 1), added];
+  }
+  const input = {
+    seeds: seeds.map((seed) => seed.id),
+    categories: scan.categories.map(({ category }) => category),
+    prefer: scan.prefer,
+    signal_location: market ?? scan.location,
+    // A venue city only belongs to the market it was given for.
+    venue_city: market ? undefined : scan.city,
+  };
+  // The seeds come from the stored scan, so they stand in for the scout's evidence.
+  const plan = planScan({ toolUseId: "compare", input }, { entities: new Map(seeds.map((seed) => [seed.id, seed])) });
+  if (plan.problem) return { problem: plan.problem };
+  const envelopes = new Map(await Promise.all(plan.jobs.map(async (job) => [job, await qloo(job.name, job.input)])));
+  // Otherwise an outage would look like a scan with no overlap.
+  if (plan.jobs.filter((job) => job.category).every((job) => envelopes.get(job).status === "error")) {
+    return { problem: "Qloo did not answer for any category. Try again in a minute." };
+  }
+  return { scan: scoredScan(plan, (job) => envelopes.get(job)), added };
+};
+
+// Partners' latest Qloo trends, beside the trend the brief recorded, so a saved
+// brief can be checked for changes. Qloo calls only. Qloo returns weekly points,
+// newest first, up to `limit`; a 90-day range returned none in testing, so ask
+// for a year and keep the latest 20 weeks.
+export const checkTrends = async (partners, qloo = callQloo, now = Date.now()) => {
+  const range = { start_date: isoDate(now - 365 * DAY_MS), end_date: isoDate(now), limit: 20 };
+  const groups = new Map();
+  for (const partner of partners) {
+    const type = typeOf(partner.category);
+    if (!partner.id || !CATEGORIES.includes(type)) continue;
+    groups.set(type, [...(groups.get(type) ?? []), partner.id]);
+  }
+  const found = new Map();
+  const failed = new Set();
+  const calls = [...groups].flatMap(([type, ids]) =>
+    // Qloo takes at most five entities per trends call.
+    Array.from({ length: Math.ceil(ids.length / 5) }, (_, index) => ({ type, ids: ids.slice(index * 5, index * 5 + 5) })),
+  );
+  await Promise.all(
+    calls.map(async ({ type, ids }) => {
+      const envelope = await qloo("qloo_trends", { entities: ids, entity_type: type, ...range });
+      if (envelope.status === "error") ids.forEach((id) => failed.add(id));
+      else recordEntities(found, "qloo_trends", envelope);
+    }),
+  );
+  const current = (id) => [...found.values()].find((entity) => String(entity.id).toUpperCase() === String(id).toUpperCase())?.trend;
+  return {
+    checked: range.end_date,
+    partners: partners.map((partner) => {
+      const now = partner.id ? current(partner.id) : undefined;
+      const problem = !partner.id
+        ? "not matched in Qloo"
+        : !CATEGORIES.includes(typeOf(partner.category))
+          ? "Qloo has no trends for this type"
+          : failed.has(partner.id)
+            ? "Qloo did not answer"
+            : !now && "no trend data from Qloo";
+      return { name: partner.name, before: partner.trend, now, problem: problem || undefined };
+    }),
   };
 };
 
@@ -133,6 +351,7 @@ const scanForModel = (scan) => ({
   prefer: scan.prefer,
   weights: scan.weights,
   categories: scan.categories,
+  audience: scan.profile,
   note: "Heuristic scores that rank within this scan only. The user sees the full table in the brief.",
   candidates: scan.candidates
     .slice(0, SCAN_ROWS_FOR_MODEL)
@@ -158,17 +377,21 @@ const replayable = (content) =>
 
 // Yields events for the UI until the session pauses on a question or finishes.
 // Tests pass their own `converse`, `qloo` and `tools` to run without AWS or Qloo.
-export async function* run(session, { converse: send = converse, qloo = callQloo, tools: listTools = loadTools } = {}) {
+export async function* run(
+  session,
+  { converse: send = converse, qloo = callQloo, tools: listTools = loadTools, timeLimitMs = RUN_TIMEOUT_MS } = {},
+) {
   let tools;
   try {
     tools = await listTools();
   } catch (error) {
-    console.error("Qloo tools unavailable:", error);
+    log("error", "qloo_unavailable", { reason: error.message });
     session.done = true;
-    yield { type: "error", message: "Qloo is not available on this server." };
+    yield { type: "error", code: "QLOO_UNAVAILABLE", message: "Qloo is not available on this server." };
     return;
   }
   let spent = 0;
+  const deadline = Date.now() + timeLimitMs;
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     // The visitor pressed Stop or left: spend no more Qloo quota or tokens.
@@ -176,6 +399,12 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
       session.done = true;
       return;
     }
+    if (Date.now() > deadline) {
+      session.done = true;
+      yield { type: "error", code: "RUN_TIMEOUT", message: "The scout ran out of time without a brief. Try a narrower brief." };
+      return;
+    }
+    shrinkOldResults(session.messages);
     let response;
     const timeout = AbortSignal.timeout(MODEL_TIMEOUT_MS);
     try {
@@ -192,11 +421,14 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
     } catch (error) {
       session.done = true;
       if (session.cancelled) return;
-      console.error("Model request failed:", error);
-      yield { type: "error", message: modelFailure(timeout.aborted ? { name: "TimeoutError" } : error) };
+      const failure = modelFailure(timeout.aborted ? { name: "TimeoutError" } : error);
+      log("error", "model_failed", { code: failure.code, provider_error: error.name, reason: error.message });
+      yield { type: "error", ...failure };
       return;
     }
 
+    session.usage.inputTokens += response.usage?.inputTokens ?? 0;
+    session.usage.outputTokens += response.usage?.outputTokens ?? 0;
     const content = replayable(response.output.message.content);
     if (content.length) session.messages.push({ role: "assistant", content });
     const said = content
@@ -207,7 +439,7 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
     if (response.stopReason !== "tool_use") {
       if (response.stopReason !== "end_turn") {
         session.done = true;
-        yield { type: "error", message: `The model stopped early (${response.stopReason}).` };
+        yield { type: "error", code: "MODEL_STOPPED", message: `The model stopped early (${response.stopReason}).` };
         return;
       }
       // Some models ask in plain text instead of calling ask_user. Keep the
@@ -225,7 +457,13 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
 
     const calls = content.filter((block) => block.toolUse).map((block) => block.toolUse);
     const [ask, ...extraAsks] = calls.filter((call) => call.name === ASK_USER);
-    const briefCall = calls.find((call) => call.name === DELIVER_BRIEF);
+    // One delivery per turn: a brief wins over a plan, and every other
+    // delivery call still gets an answer, as Bedrock requires.
+    const deliveries = calls.filter((call) => call.name === DELIVER_BRIEF || call.name === DELIVER_PLAN);
+    const briefCall = deliveries.find((call) => call.name === DELIVER_BRIEF);
+    const planCall = !briefCall && deliveries.find((call) => call.name === DELIVER_PLAN);
+    const extraDeliveries = deliveries.filter((call) => call !== briefCall && call !== planCall);
+    const { plan, problem: planProblem } = planCall ? checkPlan(planCall.input) : {};
     let { brief, problem } = briefCall ? checkBrief(briefCall.input) : {};
     // Push back once on a thin shortlist; accept it if the model insists.
     if (brief && brief.partners.length < MIN_PARTNERS && !session.askedForMore) {
@@ -233,12 +471,29 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
       problem = `Brief not accepted: it names ${brief.partners.length} partner. Give the three to five strongest, or deliver again as it is if Qloo returned no more and say so under limitations.`;
       brief = undefined;
     }
-    const scans = calls.filter((call) => call.name === SCAN_OPPORTUNITIES).map((call) => ({ call, ...planScan(call, session) }));
+    // The audience profile and cross-category table come from a scan, so ask
+    // for one once before accepting a brief without it.
+    if (brief && !session.scan && !session.askedForScan) {
+      session.askedForScan = true;
+      problem =
+        "Brief not accepted yet: call scan_opportunities once with the resolved seed entity IDs, the partner type the user wants " +
+        "and two to four other categories, so the user gets the audience profile and the cross-category table. Then deliver the brief again.";
+      brief = undefined;
+    }
+    let scans = calls.filter((call) => call.name === SCAN_OPPORTUNITIES).map((call) => ({ call, ...planScan(call, session) }));
+    // Before the first scan the user confirms whose audience it reads, since a
+    // name can resolve to the wrong entity, such as one café instead of the brand.
+    let confirm;
+    if (!session.seedsConfirmed && scans.some((scan) => !scan.problem)) {
+      if (!ask && !deliveries.length) confirm = scans.find((scan) => !scan.problem);
+      const held = "Scan not run: the user confirms the seeds before the first scan. Call scan_opportunities once, on its own.";
+      scans = scans.filter((scan) => scan !== confirm).map((scan) => (scan.problem ? scan : { call: scan.call, problem: held }));
+    }
     const ownCalls = calls.filter((call) => call.name.startsWith("qloo_"));
     // Scan jobs run like the model's own Qloo calls: same budget, cache, log and evidence.
     const qlooCalls = [...ownCalls, ...scans.flatMap((scan) => scan.jobs ?? [])];
     const unknown = calls.filter(
-      (call) => ![ASK_USER, DELIVER_BRIEF, SCAN_OPPORTUNITIES].includes(call.name) && !call.name.startsWith("qloo_"),
+      (call) => ![ASK_USER, DELIVER_BRIEF, DELIVER_PLAN, SCAN_OPPORTUNITIES].includes(call.name) && !call.name.startsWith("qloo_"),
     );
 
     // A refused call is answered to the model only; the log shows calls that ran.
@@ -276,16 +531,16 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
         scanResults.push(toolResult(scan.call.toolUseId, scan.problem, true));
         continue;
       }
-      const envelopes = scan.jobs.map((job) => ({ category: job.category, envelope: outcomes[qlooCalls.indexOf(job)].envelope }));
-      session.scan = { ...scoreScan({ calls: envelopes, seeds: scan.seeds, prefer: scan.prefer }), at: new Date().toISOString() };
+      session.scan = scoredScan(scan, (job) => outcomes[qlooCalls.indexOf(job)].envelope);
       scanResults.push(toolResult(scan.call.toolUseId, JSON.stringify(scanForModel(session.scan))));
-      yield { type: "text", text: `Scored ${session.scan.candidates.length} candidates across ${scan.jobs.length} categories.` };
+      yield { type: "text", text: `Scored ${session.scan.candidates.length} candidates across ${session.scan.categories.length} categories.` };
     }
 
     const results = [
       ...outcomes.slice(0, ownCalls.length).map(({ block }) => block),
       ...scanResults,
       ...extraAsks.map((call) => toolResult(call.toolUseId, "Ask one question at a time.", true)),
+      ...extraDeliveries.map((call) => toolResult(call.toolUseId, "Deliver one brief or plan at a time.", true)),
       ...unknown.map((call) => toolResult(call.toolUseId, `No tool named ${call.name}.`, true)),
     ];
     if (brief) {
@@ -298,6 +553,16 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
       return;
     }
     if (briefCall) results.push(toolResult(briefCall.toolUseId, problem, true));
+    if (plan) {
+      results.push(toolResult(planCall.toolUseId, "Plan delivered."));
+      if (ask) results.push(toolResult(ask.toolUseId, "The plan is already delivered.", true));
+      // Stay open for another plan or a change to the brief.
+      session.pending = { results, afterBrief: true };
+      yield { type: "plan", plan: groundPlan(plan, session.entities) };
+      yield { type: "done" };
+      return;
+    }
+    if (planCall) results.push(toolResult(planCall.toolUseId, planProblem, true));
 
     if (ask) {
       session.pending = { results, askId: ask.toolUseId };
@@ -306,11 +571,21 @@ export async function* run(session, { converse: send = converse, qloo = callQloo
       yield { type: "question", question, options: strings(ask.input.options) };
       return;
     }
+    if (confirm) {
+      session.pending = { results, askId: confirm.call.toolUseId, confirmSeeds: true };
+      const names = confirm.seeds.map((seed) => (typeOf(seed.category) ? `${seed.name} (${typeOf(seed.category).replace(/_/g, " ")})` : seed.name));
+      yield {
+        type: "question",
+        question: `Before scanning, I'll read your audience through ${names.join(", ")}. Is that who you mean?`,
+        options: [SEEDS_CONFIRMED, "No, I mean someone else"],
+      };
+      return;
+    }
 
     if (step === WRAP_UP_AT) results.push({ text: WRAP_UP });
     session.messages.push({ role: "user", content: results });
   }
 
   session.done = true;
-  yield { type: "error", message: "Stopped after reaching the step limit without a brief." };
+  yield { type: "error", code: "STEP_LIMIT", message: "Stopped after reaching the step limit without a brief." };
 }

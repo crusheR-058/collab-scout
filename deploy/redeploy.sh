@@ -10,7 +10,7 @@ INSTANCE=$(aws ec2 describe-instances --region "$REGION" \
   --filters Name=tag:Project,Values=collab-scout Name=instance-state-name,Values=running \
   --query "Reservations[0].Instances[0].InstanceId" --output text)
 
-tar -czf collab-scout.tgz src public scripts package.json package-lock.json README.md
+tar -czf collab-scout.tgz src public pages scripts package.json package-lock.json README.md
 aws s3 cp collab-scout.tgz "s3://$BUCKET/collab-scout.tgz" --region "$REGION" --only-show-errors
 rm collab-scout.tgz
 
@@ -19,7 +19,7 @@ COMMAND=$(aws ssm send-command --region "$REGION" --instance-ids "$INSTANCE" \
   --parameters "commands=[
     \"set -e\",
     \"aws s3 cp s3://$BUCKET/collab-scout.tgz /tmp/collab-scout.tgz --region $REGION --only-show-errors\",
-    \"rm -rf /opt/collab-scout/src /opt/collab-scout/public /opt/collab-scout/scripts\",
+    \"rm -rf /opt/collab-scout/src /opt/collab-scout/public /opt/collab-scout/pages /opt/collab-scout/scripts\",
     \"tar -xzf /tmp/collab-scout.tgz -C /opt/collab-scout\",
     \"cd /opt/collab-scout && npm ci --omit=dev --silent && chown -R app:app /opt/collab-scout\",
     \"systemctl restart collab-scout && sleep 3 && systemctl is-active collab-scout\",

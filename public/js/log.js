@@ -105,9 +105,7 @@ export const addCall = (event) => {
     el("pre", { text: JSON.stringify(event.input, null, 2) }),
   );
   const node = row("pending", title, result, raw);
-  const entry = { kind: "call", title, result: event.name, status: "pending" };
-  state.calls.set(event.id, { node, result, raw, entry, reused: event.reused });
-  state.entries.push(entry);
+  state.calls.set(event.id, { node, result, raw, reused: event.reused });
   // A repeated identical call reuses the earlier result and costs no Qloo request.
   if (!event.reused) state.callCount += 1;
   $("#log-list").append(node);
@@ -120,7 +118,6 @@ export const finishCall = (event) => {
   if (!call) return;
   call.node.dataset.status = event.status;
   call.result.textContent = `${describeResult(event)} · ${call.reused ? "reused earlier result" : event.name}`;
-  Object.assign(call.entry, { status: event.status, result: call.result.textContent });
   if (event.summary) call.raw.append(el("p", { text: "Qloo said" }), el("pre", { text: event.summary }));
   if (event.requests?.length) {
     call.raw.append(
@@ -134,41 +131,17 @@ export const finishCall = (event) => {
 export const addNote = (raw) => {
   const text = plain(raw);
   state.notes.push(text);
-  state.entries.push({ kind: "note", text });
   $("#log-list").append(el("li", { class: "note", text }));
   scrollLog();
   return text;
 };
 
 export const addStageHeading = (number) => {
-  const text = `${number} · ${STAGES[number - 1].title}`;
-  state.entries.push({ kind: "stage", text });
-  $("#log-list").append(el("li", { class: "stage-head", text }));
+  $("#log-list").append(el("li", { class: "stage-head", text: `${number} · ${STAGES[number - 1].title}` }));
 };
 
 export const resetLog = () => {
   $("#log-list").replaceChildren();
-  showCount();
-};
-
-// Redraw a stored log. Raw request detail is not kept, so rows do not open.
-export const showStoredLog = (entries) => {
-  $("#log-list").replaceChildren(
-    ...entries.map((entry) => {
-      if (entry.kind === "note") return el("li", { class: "note", text: entry.text });
-      if (entry.kind === "stage") return el("li", { class: "stage-head", text: entry.text });
-      return el(
-        "li",
-        { class: "call stored", "data-status": entry.status },
-        el(
-          "div",
-          { class: "call-summary" },
-          el("span", { class: "call-title", text: entry.title }),
-          el("span", { class: "call-result", text: entry.result }),
-        ),
-      );
-    }),
-  );
   showCount();
 };
 

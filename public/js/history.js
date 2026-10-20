@@ -1,54 +1,53 @@
-// Finished scouts, kept in this browser only. Storage can be missing or blocked
-// (private windows, cleared site data), so every access is guarded and the page
-// works without it.
+// Saved scouts, stored on the server for this browser only. The server knows
+// this browser by a private cookie; nothing here is shared with other people.
 import { $, el } from "./dom.js";
 
-const KEY = "collab-scout:scouts";
-const LIMIT = 20;
-
-const read = () => {
-  try {
-    const scouts = JSON.parse(localStorage.getItem(KEY) ?? "[]");
-    return Array.isArray(scouts) ? scouts : [];
-  } catch {
-    return [];
-  }
+const STATUS = {
+  delivered: "",
+  needs_input: "waiting for your answer",
+  running: "running",
+  failed: "stopped early",
+  cancelled: "stopped",
+  expired: "expired",
+  interrupted: "interrupted",
 };
-
-const write = (scouts) => {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(scouts.slice(0, LIMIT)));
-  } catch {
-    // Storage is unavailable or full: history is a convenience, so carry on.
-  }
-};
-
-// A revised brief replaces the earlier version of the same scout.
-export const saveScout = (scout) => write([scout, ...read().filter((saved) => saved.id !== scout.id)]);
 
 const date = (time) => new Date(time).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
-export const showHistory = (onOpen) => {
-  const scouts = read();
-  $("#view-history").hidden = scouts.length === 0 || document.body.dataset.view !== "idle";
+// History is a convenience: if the server cannot be reached, the page still works.
+export const request = async (url, options) => {
+  const response = await fetch(url, options);
+  if (response.status === 401) location.assign("/signin");
+  if (!response.ok && response.status !== 204) throw new Error((await response.json().catch(() => ({}))).error ?? `The server answered ${response.status}.`);
+  return response.status === 204 ? undefined : response.json();
+};
+
+export const loadScout = (id) => request(`api/research/${encodeURIComponent(id)}`);
+
+export const showHistory = async (onOpen) => {
+  const { research } = await request("api/research").catch(() => ({ research: [] }));
+  $("#view-history").hidden = research.length === 0 || document.body.dataset.view !== "idle";
   $("#history-list").replaceChildren(
-    ...scouts.map((scout) =>
+    ...research.map((scout) =>
       el(
         "li",
         {},
         el(
           "button",
-          { class: "history-open", type: "button", onclick: () => onOpen(scout) },
-          el("span", { class: "history-title", text: `${scout.brief.brand} × ${scout.brief.partners[0]?.name ?? "no match"}` }),
-          el("span", { class: "history-meta", text: `${date(scout.at)} · ${scout.callCount} Qloo calls` }),
+          { class: "history-open", type: "button", onclick: () => onOpen(scout.id) },
+          el("span", { class: "history-title", text: scout.title ?? scout.brief_text.slice(0, 80) }),
+          el("span", {
+            class: "history-meta",
+            text: [date(scout.updated_at), `${scout.qloo_calls} Qloo calls`, STATUS[scout.status]].filter(Boolean).join(" · "),
+          }),
         ),
         el("button", {
           class: "quiet",
           type: "button",
           text: "Delete",
-          "aria-label": `Delete the scout from ${date(scout.at)}`,
-          onclick: () => {
-            write(read().filter((saved) => saved.id !== scout.id));
+          "aria-label": `Delete the scout from ${date(scout.updated_at)}`,
+          onclick: async () => {
+            await request(`api/research/${encodeURIComponent(scout.id)}`, { method: "DELETE" }).catch(() => {});
             showHistory(onOpen);
           },
         }),
@@ -56,3 +55,5 @@ export const showHistory = (onOpen) => {
     ),
   );
 };
+
+export const forgetBrowser = () => request("api/me", { method: "DELETE" });

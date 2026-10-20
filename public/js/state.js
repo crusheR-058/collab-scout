@@ -5,11 +5,13 @@ export const state = {
   live: false,
   briefText: "",
   brief: undefined,
+  // Partnership plans for this scout, newest first.
+  plans: [],
+  // The share link's token, if this scout is shared.
+  share: null,
   calls: new Map(),
   callCount: 0,
   notes: [],
-  // Plain record of the field log, kept so a finished scout can be reopened.
-  entries: [],
   lastError: undefined,
 };
 
@@ -19,9 +21,10 @@ export const resetState = (briefText) => {
     live: true,
     briefText,
     brief: undefined,
+    plans: [],
+    share: null,
     callCount: 0,
     notes: [],
-    entries: [],
     lastError: undefined,
   });
   state.calls.clear();

@@ -1,15 +1,19 @@
-// Draws the finished partnership brief.
+// Draws a finished scout: the brief, and tabs for the audience profile, the
+// cross-category opportunities and partnership plans.
+import { compareSection } from "./compare.js";
+import { dnaTab } from "./dna.js";
 import { $, el, list } from "./dom.js";
+import { TRENDS, copyButton, matchMark, photo, records, score, section, categoryName } from "./evidence.js";
 import { callCountText, describeCall, named } from "./log.js";
-
-// Trend direction is calculated by the server from Qloo's population ranks.
-const TRENDS = { rising: "↗ Rising in Qloo trends", falling: "↘ Falling in Qloo trends", flat: "→ No movement in Qloo trends" };
+import { planMarkdown, plansTab } from "./plans.js";
+import { methodText, opportunitiesTab, scannedText } from "./radar.js";
+import { state } from "./state.js";
 
 const KEY =
   "Bars, ranks and Qloo records come from Qloo. Trend direction and the shared ranking are worked out from them here. " +
   "Rationales, summaries and the pitch are the scout's reading of those results. Qloo does not show availability, fees or willingness to partner.";
 
-const score = (value) => (typeof value === "number" ? value.toFixed(2) : undefined);
+const OPPORTUNITY_ROWS = 12;
 
 const qlooLine = (partner) => {
   if (partner.verified === false) return "Not found in Qloo's results for this scout.";
@@ -31,45 +35,12 @@ const partnerLine = (partner, index) =>
     .filter(Boolean)
     .join("\n");
 
-// "urn:entity:tv_show" reads as "tv show".
-const categoryName = (urn) => String(urn ?? "").replace(/^urn:entity:/, "").replace(/_/g, " ");
-
-const OPPORTUNITY_ROWS = 12;
-
-// Seeds with their Qloo category, so a seed resolved as a single café rather
-// than the brand is visible.
-const seedNames = (scan) =>
-  list(scan.seeds)
-    .map((seed) => (seed.category ? `${seed.name} (${categoryName(seed.category)})` : seed.name))
-    .join(", ");
-
-const methodText = (scan) => {
-  const seeds = seedNames(scan);
-  const size =
-    scan.prefer === "emerging" ? "less popular than the other candidates" : scan.prefer === "established" ? "more popular than the other candidates" : undefined;
-  return [
-    `Opportunity score, method ${scan.version}: a heuristic that ranks within this scan only.`,
-    `Fit (weight ${scan.weights.fit}) is the candidate's place in Qloo's order within its own category.`,
-    size && `Size (weight ${scan.weights.size}) favours candidates ${size}.`,
-    `Novelty (weight ${scan.weights.novelty}) is 1 for a category other than the seeds' (${seeds}).`,
-    "Missing data counts as zero.",
-  ]
-    .filter(Boolean)
-    .join(" ");
-};
-
-const scannedText = (scan) =>
-  `Scanned from ${seedNames(scan)}: ` +
-  list(scan.categories)
-    .map(({ category, count, error }) => `${categoryName(category)} ${error ? `(failed: ${error})` : count}`)
-    .join(", ");
-
 const placeCheck = (place) =>
   place.qloo
     ? `Qloo heatmap: near ${place.qloo.name}${place.qloo.country ? `, ${place.qloo.country}` : ""}`
     : "Not a city from a Qloo heatmap";
 
-export const briefMarkdown = (brief) =>
+export const briefMarkdown = (brief, plans = []) =>
   [
     `# ${brief.brand} × ${brief.partners[0]?.name ?? "no match"}`,
     brief.goal,
@@ -87,41 +58,10 @@ export const briefMarkdown = (brief) =>
     `## What this does not show\n${list(brief.limitations)
       .map((item) => `- ${item}`)
       .join("\n")}`,
+    ...plans.map((plan) => planMarkdown(plan, brief.brand).replace(/^# /, "## ")),
   ]
     .filter(Boolean)
     .join("\n\n");
-
-// A button that copies text and confirms it in its own label.
-const copyButton = (className, label, done, getText) => {
-  const button = el("button", {
-    class: className,
-    type: "button",
-    text: label,
-    onclick: async () => {
-      await navigator.clipboard.writeText(getText());
-      button.textContent = done;
-      setTimeout(() => (button.textContent = label), 2000);
-    },
-  });
-  return button;
-};
-
-const section = (title, ...children) => el("section", {}, el("h3", { text: title }), ...children);
-
-const initial = (name) => el("span", { class: "partner-photo initial", text: name.trim().charAt(0).toUpperCase(), "aria-hidden": "true" });
-
-const photo = (partner) => {
-  if (!partner.image) return initial(partner.name);
-  const image = el("img", {
-    class: "partner-photo",
-    src: partner.image,
-    alt: "",
-    loading: "lazy",
-    referrerPolicy: "no-referrer",
-  });
-  image.onerror = () => image.replaceWith(initial(partner.name));
-  return image;
-};
 
 const meter = (label, value) =>
   typeof value === "number" &&
@@ -137,53 +77,11 @@ const meter = (label, value) =>
     ),
   );
 
-const matchMark = (partner) => {
-  if (partner.verified === true) return el("span", { class: "tag match", text: "✓ Matched in Qloo" });
-  if (partner.verified === false) return el("span", { class: "tag no-match", text: "Not found in Qloo's results" });
-  return undefined;
-};
-
-const when = (time) => new Date(time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-// One line per Qloo call that returned this partner, in the field log's words.
-const observationLine = (observation) => {
-  const placed = observation.tool === "qloo_describe" ? "found" : `#${observation.position} of ${observation.of}`;
-  return [
-    `${describeCall(observation.tool, named(observation.input ?? {}, observation.labels))}: ${placed}`,
-    score(observation.affinity) && `affinity ${score(observation.affinity)} in this query only`,
-    list(observation.drivers).length && `driven by ${observation.drivers.join(", ")}`,
-    observation.at && when(observation.at),
-  ]
-    .filter(Boolean)
-    .join(" · ");
-};
-
-const trendLine = ({ from, to }) =>
-  `Qloo population rank ${from.rank.toLocaleString()} on ${from.date}, ${to.rank.toLocaleString()} on ${to.date}. A smaller rank is more popular.`;
-
-const records = (partner) => {
-  if (!partner.verified) {
-    return el("p", { class: "records-none", text: "Qloo did not return this name in this scout, so nothing about it has been checked." });
-  }
-  const count = list(partner.observations).length;
-  const lines = [
-    partner.description && `Qloo describes it as: ${partner.description}`,
-    ...list(partner.observations).map(observationLine),
-    partner.trend?.from && trendLine(partner.trend),
-  ].filter(Boolean);
-  return el(
-    "details",
-    { class: "records" },
-    el("summary", { text: `Qloo records (${count} ${count === 1 ? "call" : "calls"})` }),
-    el("ul", {}, ...lines.map((line) => el("li", { text: line }))),
-  );
-};
-
-const renderPartner = (partner) =>
+const renderPartner = (partner, onPlan) =>
   el(
     "li",
     { class: "partner" },
-    photo(partner),
+    photo(partner.name, partner.image),
     el(
       "div",
       { class: "partner-body" },
@@ -194,69 +92,99 @@ const renderPartner = (partner) =>
         el("span", { class: "tag", text: partner.type }),
         TRENDS[partner.trend?.direction] &&
           el("span", { class: "tag", "data-trend": partner.trend.direction, text: TRENDS[partner.trend.direction] }),
-        matchMark(partner),
+        matchMark(partner.verified),
       ),
       el("dl", { class: "meters" }, meter("Affinity", partner.affinity), meter("Popularity", partner.popularity)),
       el("p", { class: "partner-why", text: partner.rationale }),
       list(partner.evidence).length && el("p", { class: "evidence-label", text: "The scout's reading" }),
       el("ul", { class: "evidence" }, ...list(partner.evidence).map((item) => el("li", { text: item }))),
       records(partner),
+      onPlan && partner.verified && el("button", { class: "quiet plan-button", type: "button", text: "Plan this partnership", onclick: () => onPlan(partner.name) }),
     ),
   );
 
-const cell = (value) => el("td", { text: value === undefined ? "–" : String(value) });
+const ARROWS = { rising: "↗ rising", falling: "↘ falling", flat: "→ no movement" };
+const trendText = (trend) => (trend?.direction ? `${ARROWS[trend.direction]}, rank ${trend.to?.rank ?? "?"} on ${trend.to?.date ?? "?"}` : "no trend recorded");
 
-// The cross-category scan as a table: every number is a Qloo value or our
-// documented calculation from one.
-const opportunitiesSection = (scan, partners) => {
-  const chosen = new Set(partners.map((partner) => String(partner.id ?? "").toUpperCase()));
-  const rows = list(scan.candidates).slice(0, OPPORTUNITY_ROWS);
-  return section(
-    "Across categories",
-    el("p", { class: "basis", text: scannedText(scan) }),
-    rows.length
-      ? el(
-          "div",
-          { class: "table-wrap" },
+// Asks Qloo for each partner's trend now, beside what the brief recorded.
+const checkSection = (onCheck) => {
+  const result = el("div", { role: "status" });
+  const button = el("button", {
+    class: "quiet check-button",
+    type: "button",
+    text: "Check Qloo trends now",
+    onclick: async () => {
+      button.disabled = true;
+      result.replaceChildren(el("p", { class: "basis", text: "Asking Qloo…" }));
+      try {
+        const { checked, partners } = await onCheck();
+        result.replaceChildren(
           el(
-            "table",
-            { class: "opportunities" },
-            el("caption", { text: `Top ${rows.length} of ${list(scan.candidates).length} candidates by opportunity score` }),
+            "div",
+            { class: "table-wrap" },
             el(
-              "thead",
-              {},
-              el("tr", {}, ...["", "Candidate", "Category", "Qloo order", "Popularity", "Fit", "Size", "Novelty", "Score"].map((head) => el("th", { scope: "col", text: head }))),
-            ),
-            el(
-              "tbody",
-              {},
-              ...rows.map((candidate, index) =>
-                el(
-                  "tr",
-                  { "data-chosen": chosen.has(String(candidate.id).toUpperCase()) ? "true" : undefined },
-                  cell(index + 1),
-                  el(
-                    "th",
-                    { scope: "row" },
-                    candidate.name,
-                    chosen.has(String(candidate.id).toUpperCase()) && el("span", { class: "tag match", text: " · in your partners" }),
-                    list(candidate.missing).length && el("span", { class: "tag", text: ` · missing ${candidate.missing.join(", ")}` }),
-                  ),
-                  cell(categoryName(candidate.category)),
-                  cell(`#${candidate.position} of ${candidate.of}`),
-                  cell(score(candidate.popularity)),
-                  cell(score(candidate.fit)),
-                  cell(score(candidate.size)),
-                  cell(candidate.novelty === undefined ? undefined : candidate.novelty ? "yes" : "no"),
-                  el("td", {}, el("b", { text: score(candidate.score) })),
+              "table",
+              { class: "opportunities" },
+              el("caption", { text: `Qloo's latest weekly trends, checked ${checked}` }),
+              el("thead", {}, el("tr", {}, ...["Partner", "In this brief", "Now"].map((head) => el("th", { scope: "col", text: head })))),
+              el(
+                "tbody",
+                {},
+                ...partners.map((partner) =>
+                  el("tr", {}, el("th", { scope: "row", text: partner.name }), el("td", { text: trendText(partner.before) }), el("td", { text: partner.problem ?? trendText(partner.now) })),
                 ),
               ),
             ),
           ),
-        )
-      : el("p", { text: "The scan returned no candidates." }),
-    el("p", { class: "basis", text: methodText(scan) }),
+        );
+      } catch (error) {
+        result.replaceChildren(el("p", { class: "form-hint", text: error.message }));
+      }
+      button.disabled = false;
+    },
+  });
+  return section(
+    "Has anything changed?",
+    el("p", { class: "basis", text: "Qloo's trend for each partner now, against the one in this brief. It uses Qloo only, not the scout, and counts toward your hourly scouts." }),
+    button,
+    result,
   );
+};
+
+// A read-only link anyone can open; the owner can turn it off.
+const shareControl = ({ share, onShare, onUnshare }) => {
+  const box = el("div", { class: "share" });
+  const hint = el("p", { class: "form-hint", role: "status" });
+  const attempt = (action) => async () => {
+    try {
+      draw(await action());
+    } catch (error) {
+      hint.textContent = error.message;
+    }
+  };
+  const draw = (token) => {
+    hint.textContent = "";
+    if (!token) {
+      box.replaceChildren(el("button", { class: "quiet", type: "button", text: "Create a share link", onclick: attempt(onShare) }), hint);
+      return;
+    }
+    const url = `${location.origin}/s/${token}`;
+    box.replaceChildren(
+      el("input", { class: "share-url", type: "text", readOnly: true, value: url, "aria-label": "Share link" }),
+      copyButton("quiet", "Copy link", "Link copied", () => url),
+      el("button", { class: "quiet", type: "button", text: "Stop sharing", onclick: attempt(async () => (await onUnshare(), null)) }),
+      el("p", { class: "basis", text: "Anyone with this link can read this brief and its plans without signing in. Your brief text and field log stay private." }),
+      hint,
+    );
+  };
+  draw(share);
+  return box;
+};
+
+const download = (name, text) => {
+  const link = el("a", { href: URL.createObjectURL(new Blob([text], { type: "text/markdown" })), download: name });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 };
 
 // Which Qloo call the affinity bars come from, so a reader knows they compare.
@@ -293,34 +221,18 @@ const refineForm = (onRefine) => {
   );
 };
 
-// `actions` says what the reader can do next: revise a live scout, or start
-// again from a stored one whose server session is gone.
-export const renderBrief = (brief, { onRefine, onRestart, onStartAgain }) => {
-  const partners = list(brief.partners);
-  const panel = $("#panel-brief");
-
-  panel.replaceChildren(
-    el(
-      "header",
-      { class: "lockup" },
-      el("p", { class: "eyebrow", text: partners.length ? "Top match" : "No match found" }),
-      el(
-        "h2",
-        { class: "pair", "data-arrive": "", "aria-label": `${brief.brand} and ${partners[0]?.name ?? "no match"}` },
-        el("span", { class: "pair-side pair-you", text: brief.brand }),
-        el("span", { class: "pair-times", text: "×", "aria-hidden": "true" }),
-        el("span", { class: "pair-side pair-them", text: partners[0]?.name ?? "No one yet" }),
-      ),
-      el("p", { class: "brief-goal", text: brief.goal }),
-    ),
+const briefTab = (brief, partners, { onRefine, onStartAgain, onPlan, onCheck }) =>
+  el(
+    "div",
+    {},
     el(
       "div",
       { class: "brief-body" },
       el("p", { class: "key", text: KEY }),
       section("Your audience", el("p", { text: brief.audience_summary })),
       partners.length &&
-        section("Partners, ranked", basisNote(brief), el("ol", { class: "partners" }, ...partners.map(renderPartner))),
-      brief.opportunities && opportunitiesSection(brief.opportunities, partners),
+        section("Partners, ranked", basisNote(brief), el("ol", { class: "partners" }, ...partners.map((partner) => renderPartner(partner, onPlan)))),
+      onCheck && partners.some((partner) => partner.verified) && checkSection(onCheck),
       list(brief.locations).length &&
         section(
           "Where the overlap is strongest",
@@ -350,19 +262,117 @@ export const renderBrief = (brief, { onRefine, onRestart, onStartAgain }) => {
     ),
     onRefine
       ? refineForm(onRefine)
-      : el(
-          "div",
-          { class: "refine" },
-          el("p", { text: "This scout is saved in your browser. Its live session has ended, so it can't be revised." }),
-          el("button", { class: "primary", type: "button", text: "Start again from this brief", onclick: onStartAgain }),
-        ),
+      : onStartAgain &&
+          el(
+            "div",
+            { class: "refine" },
+            el("p", { text: "This scout is saved to your account. Its live session has ended, so it can't be revised." }),
+            el("button", { class: "primary", type: "button", text: "Start again from this brief", onclick: onStartAgain }),
+          ),
+  );
+
+// Tabs follow the ARIA tab pattern: arrow keys move between them.
+const tabBar = (tabs, current, onSelect) => {
+  const buttons = tabs.map(({ id, label }) =>
+    el("button", {
+      type: "button",
+      role: "tab",
+      id: `tab-${id}`,
+      "aria-controls": `tabpanel-${id}`,
+      "aria-selected": String(id === current),
+      tabIndex: id === current ? 0 : -1,
+      text: label,
+      onclick: () => onSelect(id),
+    }),
+  );
+  const bar = el("div", { class: "tabs", role: "tablist", "aria-label": "Parts of this scout" }, ...buttons);
+  bar.addEventListener("keydown", (event) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    if (!step) return;
+    const index = (tabs.findIndex(({ id }) => id === current) + step + tabs.length) % tabs.length;
+    onSelect(tabs[index].id);
+    $(`#tab-${tabs[index].id}`)?.focus();
+  });
+  return bar;
+};
+
+// `options`: onRefine and onPlan exist only while the server holds the scout;
+// onCheck, onCompare and onShare only in the app, not on a shared page;
+// `tab` and `openPlan` say what to show.
+export const renderBrief = (brief, options) => {
+  const { onRestart, onPlan, onCompare, onShare, plans = [], tab = "brief", openPlan } = options;
+  const partners = list(brief.partners);
+  const panel = $("#panel-brief");
+  const scan = brief.opportunities;
+  const tabs = [
+    { id: "brief", label: "Brief" },
+    scan && { id: "dna", label: "Audience DNA" },
+    scan && { id: "opportunities", label: "Opportunities" },
+    (onPlan || plans.length) && { id: "plans", label: plans.length ? `Plans (${plans.length})` : "Plans" },
+  ].filter(Boolean);
+  const current = tabs.some(({ id }) => id === tab) ? tab : "brief";
+  const rerender = (changes) => renderBrief(brief, { ...options, ...changes });
+  const partnerNames = partners.filter((partner) => partner.verified).map((partner) => partner.name);
+
+  const content = {
+    brief: () => briefTab(brief, partners, options),
+    dna: () => el("div", { class: "brief-body" }, dnaTab(scan)),
+    opportunities: () =>
+      el(
+        "div",
+        { class: "brief-body" },
+        opportunitiesTab(scan, { partnerIds: partners.map((partner) => partner.id).filter(Boolean), onPlan }),
+        onCompare && compareSection(scan, onCompare),
+      ),
+    plans: () =>
+      el(
+        "div",
+        { class: "brief-body" },
+        plansTab(plans, {
+          brand: brief.brand,
+          open: openPlan,
+          candidates: partnerNames.filter((name) => !plans.some((plan) => plan.partner === name)),
+          onPlan,
+          onOpen: (partner) => rerender({ tab: "plans", openPlan: partner }),
+        }),
+      ),
+  };
+
+  const parts = [
+    el(
+      "header",
+      { class: "lockup" },
+      el("p", { class: "eyebrow", text: partners.length ? "Top match" : "No match found" }),
+      el(
+        "h2",
+        { class: "pair", "data-arrive": "", "aria-label": `${brief.brand} and ${partners[0]?.name ?? "no match"}` },
+        el("span", { class: "pair-side pair-you", text: brief.brand }),
+        el("span", { class: "pair-times", text: "×", "aria-hidden": "true" }),
+        el("span", { class: "pair-side pair-them", text: partners[0]?.name ?? "No one yet" }),
+      ),
+      el("p", { class: "brief-goal", text: brief.goal }),
+    ),
+    tabs.length > 1 && tabBar(tabs, current, (id) => rerender({ tab: id })),
+    // Every panel is built so print and copy include them all; only one shows.
+    ...tabs.map(({ id }) =>
+      el("div", { role: "tabpanel", id: `tabpanel-${id}`, "aria-labelledby": `tab-${id}`, class: "tabpanel", hidden: id !== current }, content[id]()),
+    ),
     el(
       "footer",
       { class: "brief-actions" },
-      copyButton("primary", "Copy brief", "Brief copied", () => briefMarkdown({ ...brief, partners })),
+      copyButton("primary", "Copy brief", "Brief copied", () => briefMarkdown({ ...brief, partners }, plans)),
       el("button", { class: "quiet", type: "button", text: "Print or save as PDF", onclick: () => window.print() }),
-      el("button", { class: "quiet", type: "button", text: "Start a new scout", onclick: onRestart }),
-      el("p", { text: `Built from the ${callCountText()} in the field log` }),
+      el("button", {
+        class: "quiet",
+        type: "button",
+        text: "Download Markdown",
+        onclick: () => download(`${brief.brand} x ${partners[0]?.name ?? "brief"}.md`, briefMarkdown({ ...brief, partners }, plans)),
+      }),
+      onRestart && el("button", { class: "quiet", type: "button", text: "Start a new scout", onclick: onRestart }),
+      state.callCount > 0 && el("p", { text: `Built from the ${callCountText()} in the field log` }),
     ),
-  );
+    onShare && shareControl(options),
+  ];
+  // replaceChildren would print `false`, so drop it first.
+  panel.replaceChildren(...parts.filter(Boolean));
 };

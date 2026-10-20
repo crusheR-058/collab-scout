@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { limited } from "../src/qloo.mjs";
 import { A, ok } from "./fixtures.mjs";
 
-const quiet = (t) => t.mock.method(console, "warn", () => {});
+const quiet = (t) => t.mock.method(console, "log", () => {});
 const failure = (code) => ({ status: "error", summary: code, error: { code, retryable: true } });
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -31,7 +31,10 @@ test("a rate-limited call is retried, then succeeds", async (t) => {
   quiet(t);
   const replies = [failure("QLOO_RATE_LIMIT"), failure("QLOO_RATE_LIMIT"), ok([A])];
   const call = limited(async () => replies.shift(), { delays: [1, 1] });
-  assert.equal((await call("qloo_rank", {})).status, "ok");
+  const result = await call("qloo_rank", {});
+  assert.equal(result.status, "ok");
+  // Retries are counted on the result, for the metrics.
+  assert.equal(result.retries, 2);
   assert.equal(replies.length, 0);
 });
 
