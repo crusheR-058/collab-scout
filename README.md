@@ -4,6 +4,8 @@ Collab Scout is an agent that helps small brands, creators, venues and event org
 
 Built for the [Qloo Agentic Hackathon](https://qloo.devpost.com/). Live demo: https://d3269rncf4uvz.cloudfront.net
 
+The app asks you to sign in with Google. To see a finished scout without signing in, open this sample brief: https://d3269rncf4uvz.cloudfront.net/s/JqJ1W2yfdWJ_q40IfiudfVZkIm35La_h (a coffee roastery looking for an Indian independent act).
+
 ## The problem
 
 Big brands pay agencies for audience-overlap research before they sign a partnership. A café, an indie musician or a small clothing label picks partners by gut feel or follower counts. A general-purpose chatbot can suggest names, but it is guessing: it has no data on whose audiences actually overlap.
