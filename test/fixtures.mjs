@@ -46,3 +46,18 @@ export const brief = (partners) => ({
   pitch: "Hello",
   limitations: ["Test only"],
 });
+
+export const plan = (partner) => ({
+  partner,
+  concept: "A test concept",
+  fit_evidence: ["Qloo ranked it first"],
+  audience_hypothesis: "Test audience",
+  value_for_you: "Reach",
+  value_for_partner: "Sales",
+  formats: ["A limited product"],
+  considerations: ["Timing"],
+  risks: ["Availability unknown"],
+  questions: ["Are they open to it?"],
+  next_research: ["Check their calendar"],
+  validation: [{ test: "A pre-order page", measure: "Sign-ups", success: "200 in two weeks" }],
+});

@@ -11,35 +11,12 @@ const WEIGHTS = { fit: 0.6, size: 0.2, novelty: 0.2 };
 const round = (value) => Math.round(value * 100) / 100;
 const number = (value) => (Number.isFinite(value) ? value : undefined);
 
-// `calls`: [{ category, envelope }] from one scan. `seeds`: the resolved seed
-// entities, with their category when Qloo gave one.
-export const scoreScan = ({ calls, seeds, prefer = "either" }) => {
-  const seedIds = new Set(seeds.map((seed) => String(seed.id).toUpperCase()));
+// Score and order candidates. Pure, so the browser can re-rank the same
+// evidence under another size preference with exactly the same method.
+export const rankCandidates = (candidates, seeds, prefer = "either") => {
   const seedCategories = new Set(seeds.map((seed) => seed.category).filter(Boolean));
   const weights = prefer === "either" ? { fit: WEIGHTS.fit, novelty: WEIGHTS.novelty } : WEIGHTS;
   const total = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
-
-  const seen = new Set();
-  const candidates = [];
-  for (const { category, envelope } of calls) {
-    const items = (Array.isArray(envelope.results) ? envelope.results : []).filter(
-      (item) => typeof item?.name === "string" && item.entity_id,
-    );
-    for (const [index, item] of items.entries()) {
-      const id = String(item.entity_id).toUpperCase();
-      if (seedIds.has(id) || seen.has(id)) continue;
-      seen.add(id);
-      candidates.push({
-        id: item.entity_id,
-        name: item.name,
-        category: item.subtype ?? `urn:entity:${category}`,
-        position: index + 1,
-        of: items.length,
-        affinity: number(item.affinity),
-        popularity: number(item.popularity),
-      });
-    }
-  }
 
   // Popularity is placed by rank against the other candidates in this scan:
   // Qloo's raw values bunch near 1, and one outlier would squash a min-max scale.
@@ -74,14 +51,47 @@ export const scoreScan = ({ calls, seeds, prefer = "either" }) => {
       novelty,
       score: round(score),
       missing,
+      // Kept for the radar's x axis whatever the preference.
+      popularity_rank: candidate.popularity === undefined ? undefined : round(relative(candidate.popularity)),
     };
   });
 
   scored.sort((a, b) => b.score - a.score || b.fit - a.fit || a.name.localeCompare(b.name));
   return {
+    weights: Object.fromEntries(Object.entries(weights).map(([part, weight]) => [part, round(weight / total)])),
+    candidates: scored,
+  };
+};
+
+// `calls`: [{ category, envelope }] from one scan. `seeds`: the resolved seed
+// entities, with their category when Qloo gave one.
+export const scoreScan = ({ calls, seeds, prefer = "either" }) => {
+  const seedIds = new Set(seeds.map((seed) => String(seed.id).toUpperCase()));
+  const seen = new Set();
+  const candidates = [];
+  for (const { category, envelope } of calls) {
+    const items = (Array.isArray(envelope.results) ? envelope.results : []).filter(
+      (item) => typeof item?.name === "string" && item.entity_id,
+    );
+    for (const [index, item] of items.entries()) {
+      const id = String(item.entity_id).toUpperCase();
+      if (seedIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      candidates.push({
+        id: item.entity_id,
+        name: item.name,
+        category: item.subtype ?? `urn:entity:${category}`,
+        position: index + 1,
+        of: items.length,
+        affinity: number(item.affinity),
+        popularity: number(item.popularity),
+      });
+    }
+  }
+
+  return {
     version: SCORING_VERSION,
     prefer,
-    weights: Object.fromEntries(Object.entries(weights).map(([part, weight]) => [part, round(weight / total)])),
     seeds: seeds.map(({ id, name, category }) => ({ id, name, category })),
     categories: calls.map(({ category, envelope }) => ({
       category,
@@ -89,6 +99,6 @@ export const scoreScan = ({ calls, seeds, prefer = "either" }) => {
       count: Array.isArray(envelope.results) ? envelope.results.length : 0,
       error: envelope.error?.code,
     })),
-    candidates: scored,
+    ...rankCandidates(candidates, seeds, prefer),
   };
 };

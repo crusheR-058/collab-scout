@@ -72,17 +72,37 @@ if (gotBrief) {
       `${await count(".place-check")} locations (${await count(".place-check.unchecked")} not from a heatmap); ` +
       `basis: ${await page.textContent(".basis")}`,
   );
-  if (await count(".opportunities")) {
-    console.log(
-      `${await count(".opportunities tbody tr")} opportunity rows, ${await count(".opportunities tr[data-chosen]")} of them partners; ` +
-        `${await page.locator(".brief-body section:has(.opportunities) .basis").first().textContent()}`,
-    );
-    await page.locator(".brief-body section:has(.opportunities)").screenshot({ path: `${out}/4c-opportunities.png` });
-  } else console.log("no cross-category scan in this brief");
   if (await count(".records summary")) {
     await page.click(".records summary");
     console.log(`first partner's Qloo records:\n  ${(await page.locator(".records[open] li").allTextContents()).join("\n  ")}`);
     await page.locator(".records[open]").screenshot({ path: `${out}/4b-records.png` });
+  }
+
+  // The other tabs, then a partnership plan for the top partner.
+  if (await count("#tab-dna")) {
+    await page.click("#tab-dna");
+    console.log(`dna: ${await count("#tabpanel-dna .tag-group")} tag groups, ${await count("#tabpanel-dna .skew")} skew bars, ${await count("#tabpanel-dna .limits li")} gaps`);
+    await shot("4d-dna");
+    await page.click("#tab-opportunities");
+    console.log(
+      `radar: ${await count("#tabpanel-opportunities .radar-chart .dot")} dots, ${await count("#tabpanel-opportunities .radar-chart .dot[data-chosen]")} partners, ` +
+        `${await count("#tabpanel-opportunities .opportunities tbody tr")} table rows; ${await page.textContent("#tabpanel-opportunities .basis")}`,
+    );
+    await shot("4d-opportunities");
+    await page.click("#tab-brief");
+  } else console.log("no audience profile or radar in this brief");
+  if (await count(".plan-button")) {
+    await page.locator(".plan-button").first().click();
+    await page.waitForSelector("#panel-working:not([hidden])");
+    await settle("4e");
+    if (await page.isVisible("#tabpanel-plans .plan")) {
+      console.log(
+        `plan: ${await page.textContent(".plan-head h3")}, ${await count("#tabpanel-plans .plan section")} sections, ` +
+          `${await count("#tabpanel-plans .steps-table tbody tr")} validation tests, matched in Qloo: ${await count("#tabpanel-plans .plan .tag.match")}`,
+      );
+      await shot("4e-plan");
+    } else console.log(`no plan: ${await page.textContent("#ended-text").catch(() => "")}`);
+    await page.click("#tab-brief");
   }
 
   // Ask for a change and wait for the revised brief.
@@ -103,7 +123,7 @@ if (gotBrief) {
   await page.click(".history-open");
   await page.waitForSelector("#panel-brief:not([hidden])");
   await shot("7-reopened");
-  console.log(`history: ${await count("#log-list li")} stored log rows, ${await count(".refine button")} start-again button`);
+  console.log(`history: ${await count("#log-list li")} log rows replayed from the server, ${await count(".refine button")} revise or start-again buttons`);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await shot("8-phone-brief");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkBrief, groundBrief, recordEntities, recordPlaces, strings } from "../src/brief.mjs";
-import { A, B, C, brief, entity, ok } from "./fixtures.mjs";
+import { checkBrief, checkPlan, groundBrief, groundPlan, recordEntities, recordPlaces, strings } from "../src/brief.mjs";
+import { A, B, C, brief, entity, ok, plan } from "./fixtures.mjs";
 
 test("strings reads a list sent as JSON text or as a bracketless quoted list", () => {
   assert.deepEqual(strings('["a", "b"]'), ["a", "b"]);
@@ -160,4 +160,34 @@ test("groundBrief checks locations against Qloo heatmap cities", () => {
   assert.deepEqual(locations[0].qloo, { name: "Mumbai", country: "IN", distance_km: 12, affinity: 0.9, entity: "Test Artist A" });
   assert.equal(locations[1].qloo.name, "Delhi");
   assert.equal(locations[2].qloo, undefined);
+});
+
+test("checkPlan accepts a full plan and repairs lists sent as text", () => {
+  const { plan: checked } = checkPlan({ ...plan("Test Artist A"), formats: '"Pop-up", "Playlist"' });
+  assert.deepEqual(checked.formats, ["Pop-up", "Playlist"]);
+  assert.equal(checked.validation[0].success, "200 in two weeks");
+  // The first message is optional: without it the plan is still accepted.
+  assert.equal(checked.outreach_message, undefined);
+  assert.equal(checkPlan({ ...plan("Test Artist A"), outreach_message: " Hello \\n there " }).plan.outreach_message, "Hello \n there");
+});
+
+test("checkPlan sends back a plan with missing parts or garbled fields", () => {
+  const { problem } = checkPlan({
+    ...plan("Test Artist A"),
+    risks: [],
+    validation: [{ test: "No measure" }],
+    concept: 'Fine", "risks": ["x"]',
+  });
+  assert.match(problem, /risks must be a list/);
+  assert.match(problem, /validation must list tests/);
+  assert.match(problem, /concept contains other fields/);
+});
+
+test("groundPlan attaches Qloo's records, or flags a partner Qloo never returned", () => {
+  const entities = new Map();
+  recordEntities(entities, "qloo_recommend", ok([A]), { id: "rec" });
+  const known = groundPlan(checkPlan(plan("test artist a")).plan, entities);
+  assert.deepEqual([known.partner, known.verified, known.observations.length], ["Test Artist A", true, 1]);
+  const unknown = groundPlan(checkPlan(plan("Made Up Act")).plan, entities);
+  assert.deepEqual([unknown.verified, unknown.observations], [false, []]);
 });

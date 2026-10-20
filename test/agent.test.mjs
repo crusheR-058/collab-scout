@@ -1,10 +1,16 @@
 // The agent loop with a scripted model and a fake Qloo: no AWS or Qloo needed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { answer, cancel, newSession, run } from "../src/agent.mjs";
-import { A, B, C, brief, entity, ok, textTurn, toolTurn } from "./fixtures.mjs";
+import { SEEDS_CONFIRMED, answer, cancel, checkTrends, forModel, newSession, planRequest, rescan, run, shrinkOldResults } from "../src/agent.mjs";
+import { A, B, C, brief, entity, ok, plan, textTurn, toolTurn } from "./fixtures.mjs";
 
 const quiet = (t) => t.mock.method(console, "error", () => {});
+
+// A session whose user has confirmed the seeds, for tests about the scan itself.
+const confirmed = () => Object.assign(newSession("brief"), { seedsConfirmed: true });
+
+// A session that has already been asked once for a scan, for tests about other things.
+const scanned = () => Object.assign(newSession("brief"), { askedForScan: true });
 
 // Runs one scout; `turns` are the model's replies in order.
 const scout = async (turns, { session = newSession("brief"), qloo, converse } = {}) => {
@@ -25,10 +31,13 @@ const scout = async (turns, { session = newSession("brief"), qloo, converse } = 
 };
 
 test("a scout runs Qloo calls and delivers a grounded brief", async () => {
-  const { types, events, session } = await scout([
-    toolTurn(["qloo_recommend", { target_type: "artist", signals: ["X"] }]),
-    toolTurn(["deliver_brief", brief(["Test Artist A", "Test Artist B", "Test Artist C"])]),
-  ]);
+  const { types, events, session } = await scout(
+    [
+      toolTurn(["qloo_recommend", { target_type: "artist", signals: ["X"] }]),
+      toolTurn(["deliver_brief", brief(["Test Artist A", "Test Artist B", "Test Artist C"])]),
+    ],
+    { session: scanned() },
+  );
   assert.deepEqual(types, ["tool_call", "tool_result", "brief", "done"]);
   const delivered = events.find((event) => event.type === "brief").brief;
   assert.equal(delivered.partners[0].affinity, 0.9);
@@ -105,7 +114,7 @@ test("Qloo being unavailable ends the scout with a plain message", async (t) => 
   })) {
     events.push(event);
   }
-  assert.deepEqual(events, [{ type: "error", message: "Qloo is not available on this server." }]);
+  assert.deepEqual(events, [{ type: "error", code: "QLOO_UNAVAILABLE", message: "Qloo is not available on this server." }]);
 });
 
 test("cancelling aborts the model call in flight and ends quietly", async () => {
@@ -149,7 +158,7 @@ test("a question pauses the scout and an answer resumes it", async () => {
 
 test("a thin shortlist is pushed back once, then accepted", async () => {
   const one = brief(["Test Artist A"]);
-  const { types, sent } = await scout([toolTurn(["deliver_brief", one]), toolTurn(["deliver_brief", one])]);
+  const { types, sent } = await scout([toolTurn(["deliver_brief", one]), toolTurn(["deliver_brief", one])], { session: scanned() });
   assert.match(JSON.stringify(sent[1].at(-1)), /Brief not accepted/);
   assert.deepEqual(types, ["brief", "done"]);
 });
@@ -175,6 +184,12 @@ const catalogue = (name, input) => {
   if (name === "qloo_describe") {
     // Real describe results carry no subtype; the type is in the interpretation.
     return ok([entity("Seed Brand", SEED_ID, { subtype: undefined })], { interpretation: { entity: { type: "urn:entity:brand" } } });
+  }
+  if (name === "qloo_entity_tags") return ok([{ id: "urn:tag:genre:music:indie", name: " indie", type: "urn:tag:genre:music", affinity: 0.9 }]);
+  if (name === "qloo_audience_demographics") {
+    return ok([{ entity_id: SEED_ID, query: { age: { "25_to_29": 0.3, bad: "x" }, gender: { female: -0.1 } } }], {
+      interpretation: { entity: { name: "Seed Brand" } },
+    });
   }
   const type = input.target_type;
   return ok([1, 2].map((n) => entity(`${type} ${n}`, `00000000-0000-4000-8000-${type.length}${n}`.padEnd(36, "0"), { subtype: `urn:entity:${type}`, popularity: n / 2 })));
@@ -210,17 +225,19 @@ test("a scan runs one logged recommend per category and returns a scored table",
       toolTurn(["scan_opportunities", { seeds: [SEED_ID.toLowerCase()], categories: ["brand", "podcast"], prefer: "emerging" }]),
       toolTurn(["deliver_brief", brief(["podcast 1", "brand 1", "podcast 2"])]),
     ],
-    { qloo: catalogue },
+    { qloo: catalogue, session: confirmed() },
   );
   assert.deepEqual(
     qlooCalls.slice(1).map(({ name, input }) => [name, input]),
     [
       ["qloo_recommend", { target_type: "brand", signals: [SEED_ID] }],
       ["qloo_recommend", { target_type: "podcast", signals: [SEED_ID] }],
+      ["qloo_entity_tags", { entities: [SEED_ID], limit: 10 }],
+      ["qloo_audience_demographics", { entity: SEED_ID }],
     ],
   );
   // The field log shows the real calls the scan made.
-  assert.equal(events.filter((event) => event.type === "tool_call").length, 3);
+  assert.equal(events.filter((event) => event.type === "tool_call").length, 5);
 
   const reply = JSON.parse(sent[2].at(-1).content[0].toolResult.content[0].text);
   assert.equal(reply.scoring_version, "1");
@@ -229,6 +246,11 @@ test("a scan runs one logged recommend per category and returns a scored table",
 
   const delivered = events.find((event) => event.type === "brief").brief;
   assert.equal(delivered.opportunities.candidates.length, 4);
+  assert.deepEqual(delivered.opportunities.profile, {
+    tags: { status: "ok", error: undefined, items: [{ name: "indie", type: "urn:tag:genre:music", affinity: 0.9 }] },
+    // A value of the wrong shape is dropped, not shown.
+    demographics: { status: "ok", error: undefined, entity: "Seed Brand", age: { "25_to_29": 0.3 }, gender: { female: -0.1 } },
+  });
   assert.equal(delivered.opportunities.prefer, "emerging");
   // Scan results are evidence like any other call.
   assert.equal(delivered.partners[0].observations[0].tool, "qloo_recommend");
@@ -242,9 +264,240 @@ test("scan calls count toward the per-turn limit", async () => {
       toolTurn(...describes, ["scan_opportunities", { seeds: [SEED_ID], categories: ["artist", "book", "movie"] }]),
       textTurn(""),
     ],
-    { qloo: catalogue },
+    { qloo: catalogue, session: confirmed() },
   );
   assert.equal(qlooCalls.length, 1 + 8);
   const scan = JSON.parse(sent[2].at(-1).content.at(-1).toolResult.content[0].text);
   assert.equal(scan.categories.at(-1).error, "TURN_LIMIT");
+});
+
+test("a plan request after a brief delivers a grounded plan and stays open", async () => {
+  const session = scanned();
+  await scout([toolTurn(["qloo_recommend", { target_type: "artist" }]), toolTurn(["deliver_brief", brief(["Test Artist A", "Test Artist B", "Test Artist C"])])], { session });
+  answer(session, planRequest("Test Artist A"));
+  const { types, events, sent } = await scout([toolTurn(["deliver_plan", plan("Test Artist A")])], { session });
+  assert.deepEqual(types, ["plan", "done"]);
+  const delivered = events[0].plan;
+  assert.equal(delivered.verified, true);
+  assert.equal(delivered.observations[0].tool, "qloo_recommend");
+  assert.equal(session.pending.afterBrief, true);
+  // The request the model read was written by the server.
+  assert.match(sent[0].at(-1).content.at(-1).text, /Do not invent contacts, budgets/);
+});
+
+test("a garbled plan is sent back to the model", async () => {
+  const { types, sent } = await scout([toolTurn(["deliver_plan", { partner: "X" }]), textTurn("")]);
+  assert.deepEqual(types, ["done"]);
+  assert.match(sent[1].at(-1).content[0].toolResult.content[0].text, /Plan not accepted/);
+});
+
+test("a brief and a plan in one turn: the brief wins and the plan still gets an answer", async () => {
+  const { types, session } = await scout(
+    [
+      toolTurn(["qloo_recommend", { target_type: "artist" }]),
+      toolTurn(["deliver_brief", brief(["Test Artist A", "Test Artist B", "Test Artist C"])], ["deliver_plan", plan("Test Artist A")]),
+    ],
+    { session: scanned() },
+  );
+  assert.deepEqual(types.slice(-2), ["brief", "done"]);
+  const answered = session.pending.results.map((block) => block.toolResult?.content[0].text);
+  assert.ok(answered.includes("Deliver one brief or plan at a time."));
+});
+
+test("a brief without a scan is sent back once for one, then accepted", async () => {
+  const three = brief(["Test Artist A", "Test Artist B", "Test Artist C"]);
+  const { types, sent } = await scout([
+    toolTurn(["qloo_recommend", { target_type: "artist" }]),
+    toolTurn(["deliver_brief", three]),
+    toolTurn(["deliver_brief", three]),
+  ]);
+  assert.match(sent[2].at(-1).content[0].toolResult.content[0].text, /call scan_opportunities once/);
+  assert.deepEqual(types.slice(-2), ["brief", "done"]);
+});
+
+test("a scan weighs the audience in the market and keeps venues in the city given", async () => {
+  const { qlooCalls, events } = await scout(
+    [
+      toolTurn(["qloo_describe", { entity: "Seed Brand" }]),
+      toolTurn(["scan_opportunities", { seeds: [SEED_ID], categories: ["artist", "place"], signal_location: " India ", venue_city: "Mumbai" }]),
+      toolTurn(["deliver_brief", brief(["artist 1", "place 1", "artist 2"])]),
+    ],
+    { qloo: catalogue, session: confirmed() },
+  );
+  const [artist, place] = qlooCalls.slice(1, 3).map((call) => call.input);
+  assert.deepEqual(artist, { target_type: "artist", signals: [SEED_ID], signal_location: "India" });
+  assert.deepEqual(place, { target_type: "place", signals: [SEED_ID], signal_location: "India", filter_location: "Mumbai" });
+  const { location, city } = events.find((event) => event.type === "brief").brief.opportunities;
+  assert.deepEqual([location, city], ["India", "Mumbai"]);
+});
+
+test("the first scan waits for the user to confirm whose audience it reads", async () => {
+  const scan = ["scan_opportunities", { seeds: [SEED_ID], categories: ["artist"] }];
+  const first = await scout([toolTurn(["qloo_describe", { entity: "Seed Brand" }]), toolTurn(scan)], { qloo: catalogue });
+  // Only the describe ran; the scan became a question naming the seed and its type.
+  assert.deepEqual(first.qlooCalls.map((call) => call.name), ["qloo_describe"]);
+  const question = first.events.find((event) => event.type === "question");
+  assert.match(question.question, /Seed Brand \(brand\)/);
+  assert.equal(question.options[0], SEEDS_CONFIRMED);
+
+  answer(first.session, SEEDS_CONFIRMED);
+  const second = await scout([toolTurn(scan), textTurn("")], { session: first.session, qloo: catalogue });
+  // The answer reached the model as the held scan's result, and the repeated scan ran without asking again.
+  assert.match(second.sent[0].at(-1).content[0].toolResult.content[0].text, /answered "Yes, scan with these"/);
+  assert.deepEqual(second.qlooCalls.map((call) => call.name), ["qloo_recommend", "qloo_entity_tags", "qloo_audience_demographics"]);
+  assert.ok(!second.events.some((event) => event.type === "question"));
+});
+
+test("after a no, the next scan asks again instead of running", async () => {
+  const scan = ["scan_opportunities", { seeds: [SEED_ID], categories: ["artist"] }];
+  const first = await scout([toolTurn(["qloo_describe", { entity: "Seed Brand" }]), toolTurn(scan)], { qloo: catalogue });
+  answer(first.session, "No, I mean someone else");
+  const second = await scout([toolTurn(scan)], { session: first.session, qloo: catalogue });
+  assert.deepEqual(second.qlooCalls, []);
+  assert.equal(second.events.find((event) => event.type === "question")?.options[0], SEEDS_CONFIRMED);
+});
+
+test("a stored scan runs again for another market and with an added name, Qloo only", async () => {
+  const calls = [];
+  const qloo = async (name, input) => (calls.push([name, input]), catalogue(name, input));
+  const stored = {
+    seeds: [{ id: "00000000-0000-4000-8000-0000000000BB", name: "First", category: "urn:entity:artist" }],
+    categories: [{ category: "artist" }, { category: "place" }],
+    prefer: "emerging",
+    location: "India",
+    city: "Mumbai",
+  };
+  const { scan, added } = await rescan(stored, { market: "Delhi", add: "Seed Brand" }, qloo);
+  assert.deepEqual(added, { id: SEED_ID, name: "Seed Brand", category: "urn:entity:brand" });
+  const recommends = calls.filter(([name]) => name === "qloo_recommend").map(([, input]) => input);
+  // The new market replaces the old one, and the old venue city goes with it.
+  assert.deepEqual(recommends[1], { target_type: "place", signals: [stored.seeds[0].id, SEED_ID], signal_location: "Delhi" });
+  assert.deepEqual([scan.location, scan.city, scan.prefer], ["Delhi", undefined, "emerging"]);
+  assert.equal(scan.candidates.length, 4);
+
+  const none = await rescan(stored, { add: "Nobody" }, async () => ok([]));
+  assert.match(none.problem, /no match for Nobody/);
+
+  // An ambiguous name, as Qloo sends it: the most popular candidate is read.
+  const candidates = [
+    { id: "C1", name: "Kin (album)", type: "urn:entity:album", popularity: 0.7 },
+    { id: "C2", name: "Kin", type: "urn:entity:brand", popularity: 0.98 },
+  ];
+  const ambiguous = await rescan(stored, { add: "Kin" }, async (name, input) =>
+    name === "qloo_describe" ? { status: "needs_input", resolution: { issues: [{ input: "Kin", candidates }] } } : catalogue(name, input),
+  );
+  assert.deepEqual(ambiguous.added, { id: "C2", name: "Kin", category: "urn:entity:brand", of: 2 });
+
+  // A full seed list keeps the first seed and makes room for the added name.
+  const full = { ...stored, seeds: [1, 2, 3, 4, 5].map((n) => ({ id: `S${n}`, name: `Seed ${n}` })) };
+  const fuller = await rescan(full, { add: "Seed Brand" }, catalogue);
+  assert.deepEqual(fuller.scan.seeds.map((seed) => seed.id), ["S1", "S2", "S3", "S4", SEED_ID]);
+
+  // When Qloo answers no category, the comparison is refused rather than shown empty.
+  const down = await rescan(stored, { market: "Delhi" }, async () => ({ status: "error", error: { code: "TIMEOUT" } }));
+  assert.match(down.problem, /did not answer/);
+});
+
+test("checking a brief's partners asks Qloo for trends by type, five at most per call", async () => {
+  const partners = [
+    ...Array.from({ length: 6 }, (_, index) => ({ name: `Artist ${index}`, id: `A${index}`, category: "urn:entity:artist" })),
+    { name: "Brand", id: "B0", category: "urn:entity:brand", trend: { direction: "falling" } },
+    { name: "Unmatched" },
+  ];
+  const calls = [];
+  const qloo = async (name, input) => {
+    calls.push(input);
+    if (input.entity_type === "artist") return { status: "error", error: { code: "UPSTREAM" } };
+    const points = [{ date: "2026-08-01", population_rank: "900" }, { date: "2026-10-01", population_rank: "100" }];
+    return { status: "ok", series: [{ entity: { name: "Brand", entityId: "B0" }, points }] };
+  };
+  const result = await checkTrends(partners, qloo, Date.parse("2026-10-16"));
+  assert.deepEqual(calls.map((input) => [input.entity_type, input.entities.length]), [["artist", 5], ["artist", 1], ["brand", 1]]);
+  assert.deepEqual([calls[0].start_date, calls[0].end_date, calls[0].limit], ["2025-10-16", "2026-10-16", 20]);
+  const brand = result.partners.find((partner) => partner.name === "Brand");
+  assert.deepEqual([brand.before.direction, brand.now.direction], ["falling", "rising"]);
+  assert.equal(result.partners[0].problem, "Qloo did not answer");
+  assert.equal(result.partners.at(-1).problem, "not matched in Qloo");
+});
+
+test("the model's view of a Qloo result keeps what it acts on and drops the rest", () => {
+  const view = forModel({
+    schema_version: "1",
+    status: "needs_input",
+    summary: "Choose",
+    error: { code: "X", retryable: true, recovery: "retry" },
+    interpretation: { entity: { name: "Seed" } },
+    query_intent: { big: true },
+    execution: { duration_ms: 5 },
+    provenance: { requests: [] },
+    resolution: {
+      provider: { name: "p" },
+      issues: [{ input: "Seed", candidates: [{ id: "1", name: "Seed", description: "a cafe" }] }],
+      outcomes: [{ input: "Seed", provenance: {}, alternatives: [{ id: "2", name: "Other", type: "t", description: "long" }] }],
+    },
+    results: [{ ...A, explainability: {}, properties: { image: { url: "https://x" }, description: "d".repeat(500), address: "1 Street" } }],
+    series: [{ entity: { name: "A" }, points: [] }],
+  });
+  for (const gone of ["schema_version", "query_intent", "execution", "provenance"]) assert.equal(view[gone], undefined);
+  assert.deepEqual(view.error, { code: "X", retryable: true, recovery: "retry" });
+  assert.equal(view.resolution.issues[0].candidates[0].description, "a cafe");
+  assert.deepEqual(view.resolution.outcomes[0], { input: "Seed", alternatives: [{ id: "2", name: "Other", type: "t" }] });
+  assert.deepEqual(view.results[0].properties, { address: "1 Street", description: "d".repeat(300) });
+  assert.equal(view.results[0].affinity, 0.9);
+  assert.deepEqual(view.series, [{ entity: { name: "A" }, points: [] }]);
+});
+
+test("results from before the latest turn are replayed without resolved alternatives or full series", () => {
+  const envelope = {
+    status: "ok",
+    resolution: {
+      outcomes: [
+        { input: "Seed", status: "resolved", selected: { id: "1", name: "Seed", type: "t", description: "long" }, alternatives: [{ id: "2" }] },
+        { input: "Maybe", status: "ambiguous", alternatives: [{ id: "3", name: "Maybe A" }] },
+      ],
+    },
+    results: [{ ...A, properties: { description: "long" } }],
+    series: [{ entity: { name: "A" }, points: ["2026-03-01", "2026-01-01", "2026-02-01"].map((date) => ({ date })) }],
+  };
+  const turn = (id) => ({ role: "user", content: [{ toolResult: { toolUseId: id, content: [{ text: JSON.stringify(envelope) }] } }] });
+  const messages = [{ role: "user", content: [{ text: "brief" }] }, turn("old"), { role: "assistant", content: [{ text: "ok" }] }, turn("new")];
+  shrinkOldResults(messages);
+
+  const old = JSON.parse(messages[1].content[0].toolResult.content[0].text);
+  assert.deepEqual(old.resolution.outcomes[0], { input: "Seed", status: "resolved", selected: { id: "1", name: "Seed", type: "t" } });
+  assert.deepEqual(old.resolution.outcomes[1], envelope.resolution.outcomes[1]);
+  assert.deepEqual(old.results[0], envelope.results[0]);
+  assert.deepEqual(old.series[0], { entity: { name: "A" }, points: [{ date: "2026-01-01" }, { date: "2026-03-01" }], point_count: 3 });
+  assert.deepEqual(JSON.parse(messages[3].content[0].toolResult.content[0].text), envelope);
+  assert.deepEqual(messages[0].content, [{ text: "brief" }]);
+});
+
+test("token and Qloo call usage is counted per session, reused calls excluded", async () => {
+  const call = ["qloo_describe", { entity: "X" }];
+  const usage = { inputTokens: 100, outputTokens: 7 };
+  const turns = [toolTurn(call), toolTurn(call), textTurn("")].map((turn) => ({ ...turn, usage }));
+  const { session } = await scout(turns);
+  assert.deepEqual(session.usage, { inputTokens: 300, outputTokens: 21, qlooCalls: 1 });
+});
+
+test("a run that outlives its time limit ends instead of carrying on", async () => {
+  const session = newSession("brief");
+  const events = [];
+  const slow = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return toolTurn(["qloo_find_tags", { query: `q${Math.random()}` }]);
+  };
+  for await (const event of run(session, { tools: async () => [], converse: slow, qloo: async () => ok([]), timeLimitMs: 50 })) events.push(event);
+  assert.equal(events.at(-1).code, "RUN_TIMEOUT");
+  assert.equal(session.done, true);
+});
+
+test("a model failure carries a code the browser and metrics can use", async (t) => {
+  quiet(t);
+  const { events } = await scout([], {
+    converse: async () => {
+      throw Object.assign(new Error("slow down"), { name: "ThrottlingException" });
+    },
+  });
+  assert.equal(events[0].code, "MODEL_RATE_LIMIT");
 });

@@ -1,5 +1,6 @@
-// The HTTP layer, run as a real process. Only paths that need neither Qloo nor
-// Bedrock are exercised here.
+// The HTTP layer, run as a real process with no Qloo, Bedrock or Cognito: the
+// paths that work without them, and proof that the app stays closed without
+// sign-in configured. Signed-in behaviour is in api.test.mjs.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { after, before, test } from "node:test";
@@ -11,7 +12,7 @@ let server;
 
 before(async () => {
   server = spawn(process.execPath, [fileURLToPath(new URL("../src/server.mjs", import.meta.url))], {
-    env: { ...process.env, PORT: String(PORT), QLOO_COMMAND: "qloo-not-installed-for-tests" },
+    env: { ...process.env, PORT: String(PORT), QLOO_COMMAND: "qloo-not-installed-for-tests", DATABASE_PATH: ":memory:" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   await new Promise((resolve, reject) => {
@@ -34,31 +35,18 @@ test("the page is served with security headers and no framework banner", async (
   assert.match(await response.text(), /Collab Scout/);
 });
 
-test("an empty or oversized brief is rejected", async () => {
-  for (const brief of ["", "   ", "x".repeat(2001), 42]) {
-    const response = await post("/api/scout", JSON.stringify({ brief }));
-    assert.equal(response.status, 400);
-    assert.match((await response.json()).error, /1 to 2000 characters/);
-  }
-});
-
 test("malformed JSON gets a short JSON error, not a stack trace", async () => {
   const response = await post("/api/scout", "{not json");
   assert.equal(response.status, 400);
   const text = await response.text();
-  assert.deepEqual(JSON.parse(text), { error: "The request body is not valid JSON." });
+  assert.deepEqual(JSON.parse(text), { error: "The request body is not valid JSON.", code: "INVALID_JSON" });
   assert.doesNotMatch(text, /at |node_modules/);
 });
 
 test("a body over the size limit is refused", async () => {
   const response = await post("/api/scout", JSON.stringify({ brief: "x".repeat(30000) }));
   assert.equal(response.status, 413);
-  assert.deepEqual(await response.json(), { error: "The request is too large." });
-});
-
-test("answering an unknown scout is a 404", async () => {
-  const response = await post("/api/scout/not-a-session/answer", JSON.stringify({ answer: "yes" }));
-  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "The request is too large.", code: "TOO_LARGE" });
 });
 
 test("health reports Qloo as not connected when the harness is missing", async () => {
@@ -68,13 +56,21 @@ test("health reports Qloo as not connected when the harness is missing", async (
   assert.equal(typeof body.model, "string");
 });
 
-test("a scout without Qloo ends with a plain error event", async () => {
-  const response = await post("/api/scout", JSON.stringify({ brief: "I am a test brief." }));
-  assert.equal(response.headers.get("content-type"), "text/event-stream");
-  const events = (await response.text())
-    .split("\n\n")
-    .filter((frame) => frame.startsWith("data: "))
-    .map((frame) => JSON.parse(frame.slice(6)));
-  assert.equal(events[0].type, "session");
-  assert.deepEqual(events.at(-1), { type: "error", message: "Qloo is not available on this server." });
+test("without sign-in configured, the app and its API stay closed", async () => {
+  const page = await fetch(`${base}/scout`, { redirect: "manual" });
+  assert.equal(page.status, 303);
+  assert.equal(page.headers.get("location"), "/signin");
+  const signIn = await fetch(`${base}/auth/signin`, { redirect: "manual" });
+  assert.equal(signIn.status, 503);
+  for (const response of [await fetch(`${base}/api/research`), await post("/api/scout", JSON.stringify({ brief: "x" }))]) {
+    assert.equal(response.status, 401);
+    assert.equal((await response.json()).code, "SIGN_IN_REQUIRED");
+  }
+});
+
+test("the app page is not served as a static file", async () => {
+  for (const path of ["/scout.html", "/pages/scout.html", "/index.html"]) {
+    const response = await fetch(`${base}${path}`, { redirect: "manual" });
+    assert.doesNotMatch(await response.text(), /id="brief-form"/, path);
+  }
 });
